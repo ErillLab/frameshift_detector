@@ -1,0 +1,16 @@
+{
+    "entrez_email" : "sarata1@umbc.edu",
+	"entrez_apikey" : "a68574ade609918a2177d8f8f61e02ffc408",
+	"sleep" : 0.5,
+	"assembly_chromids" : ["NC_001134.8", "NC_001135.5", "NC_001136.10", "NC_001137.3", "NC_001138.5", "NC_001139.9", "NC_001140.6", 
+        "NC_001141.2", "NC_001142.9", "NC_001143.9", "NC_001144.5", "NC_001145.3", "NC_001146.8", "NC_001147.6", "NC_001148.4"],
+    "genome_path" : "genome_data",
+    "max_up_scan_dist" : 300,
+    "frame" : 1,
+    "outfile_name" : "Saccharomycetaceae_sp_Ashbya_aceri",
+    "ustream_limit" : 5000,
+    "dstream_limit" : 5000,
+    "stop_codons" : ["TAG","TAA","TGA"],
+    "start_codons" : ["ATG"],
+    "signals": [["CTTAGGC",1], ["GCGAGGC",2], ["CTTAGTC",5], ["GCGAGTC",3]]
+}
