@@ -6,31 +6,75 @@ Example usage: python3 frameshift_detector.py input.json --verbose
 
 from contextlib import nullcontext
 from Bio import Entrez, SeqIO
+from Bio.Seq import Seq
 import argparse
 import json
 import time
 import os
 
 potential_frameshifts = []
+genome_features = []
+
+class GenomeFeature:
+    '''
+    An object containing information about a specific feature pulled from a Genebank file.
+    '''
+    def __init__(self, nuc_acc, nuc_desc, feature):
+        # Basic feature metadata
+        self.accession = nuc_acc
+        self.description = nuc_desc
+        self.feature = feature
+        self.type = feature.type
+        self.strand = feature.strand
+        self.location = feature.location
+        self.locus_tag = feature.qualifiers['locus_tag'][0]
+        self.protein_id = feature.qualifiers['protein_id'][0]
+        self.product = feature.qualifiers['product'][0]
+        # If CDS has multiple exons
+        if self.feature.location_operator == 'join':
+            self.unspliced_sequence = self.get_unspliced_DNA()
+            self.spliced_sequence = self.get_spliced_DNA()[0]
+            self.splice_seq_true_positions = self.get_spliced_DNA()[1]
+        # If CDS has one exon
+        else:
+            self.unspliced_sequence = nucrec[self.location.start:self.location.end].seq
+            self.spliced_sequence = nucrec[self.location.start:self.location.end].seq
+            self.splice_seq_true_positions = list(range(int(self.location.start), int(self.location.end)+1))
+    
+    def get_unspliced_DNA(self):
+        '''
+        Returns a sequence including introns for the genome feature
+        '''
+        first_exon_start = self.location.parts[0].start # start of first exon
+        last_exon_end = self.location.parts[-1].end # end of last exon
+        return nucrec[first_exon_start:last_exon_end].seq
+
+    def get_spliced_DNA(self):
+        '''
+        Returns a tuple containing the sequence excluding introns for the genome feature and an
+        array of true nucleotide positions for the feature
+        '''
+        sequence_string = ""
+        true_positions = []
+        for part in self.location.parts:
+            print(part)
+            true_positions.extend(list(range(int(part.start), int(part.end)+1)))
+            sequence_string += str(nucrec[part.start:part.end].seq)
+
+        print(sequence_string)
+        print(true_positions,'\n')
+        return (Seq(sequence_string), true_positions)
+    
 
 class Frameshift:
     '''
     Holds information for a potential frame shift
     '''
-    def __init__(self, fs_case, nuc_acc, nuc_desc, fs_location, signal_found, feature):
-        self.accession = nuc_acc
-        self.description = nuc_desc
+    def __init__(self, fs_case, location, signal_found, genome_feature):
+        self.genome_feature = genome_feature
         self.case = fs_case
-        self.feature = feature
-        self.type = feature.type
-        self.strand = feature.strand
-        self.start = feature.location.start
-        self.end = feature.location.end
+        self.location = location
         self.signal_found = signal_found
-        self.locus_tag = feature.qualifiers['locus_tag'][0]
-        self.protein_id = feature.qualifiers['protein_id'][0]
-        self.product = feature.qualifiers['product'][0]
-        self.fs_location = fs_location
         self.sequence = nucrec[self.start:self.end].seq
     
 def download_gbk_files(entrez_email, entrez_api_key, genome_path):
@@ -152,6 +196,7 @@ if __name__ == "__main__":
             feat = nucrec.features[i]
             if (feat.type == 'CDS'):
                 if (feat.strand == 1):
-                    find_case_two_frameshift(feat, params['frame'], params['ustream_limit'], params['stop_codons'], params['signals'])
+                    genome_features.append(GenomeFeature(nuc_acc=nucrec.name, nuc_desc=nucrec.description, feature=feat))
+                    #find_case_two_frameshift(feat, params['frame'], params['ustream_limit'], params['stop_codons'], params['signals'])
 
     write_to_txt(params['outfile_name'])
