@@ -1,0 +1,14 @@
+{
+    "entrez_email" : "sarata1@umbc.edu",
+	"entrez_apikey" : "a68574ade609918a2177d8f8f61e02ffc408",
+	"sleep" : 0.5,
+	"assembly_chromids" : ["test"],
+    "genome_path" : "testing_data",
+    "frame" : 1,
+    "outfile_name" : "test",
+    "ustream_limit" : 5000,
+    "dstream_limit" : 5000,
+    "stop_codons" : ["TAG","TAA","TGA"],
+    "start_codons" : ["ATG"],
+    "signals": [["CTTAGGC",10]]
+}

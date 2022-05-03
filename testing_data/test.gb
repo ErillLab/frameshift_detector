@@ -1,0 +1,122 @@
+LOCUS       TEST_1             230218 bp    DNA     linear   CON 12-JAN-2022
+DEFINITION  Saccharomyces cerevisiae S288C chromosome I, complete sequence.
+ACCESSION   TEST_1
+VERSION     TEST_1.0
+DBLINK      BioProject: PRJNA128
+            Assembly: GCF_000146045.2
+KEYWORDS    RefSeq.
+SOURCE      Saccharomyces cerevisiae S288C
+  ORGANISM  Saccharomyces cerevisiae S288C
+            Eukaryota; Fungi; Dikarya; Ascomycota; Saccharomycotina;
+            Saccharomycetes; Saccharomycetales; Saccharomycetaceae;
+            Saccharomyces.
+REFERENCE   1  (bases 1 to 230218)
+  AUTHORS   Goffeau,A., Barrell,B.G., Bussey,H., Davis,R.W., Dujon,B.,
+            Feldmann,H., Galibert,F., Hoheisel,J.D., Jacq,C., Johnston,M.,
+            Louis,E.J., Mewes,H.W., Murakami,Y., Philippsen,P., Tettelin,H. and
+            Oliver,S.G.
+  TITLE     Life with 6000 genes
+  JOURNAL   Science 274 (5287), 546 (1996)
+   PUBMED   8849441
+REFERENCE   2  (bases 1 to 230218)
+  AUTHORS   Bussey,H., Kaback,D.B., Zhong,W., Vo,D.T., Clark,M.W., Fortin,N.,
+            Hall,J., Ouellette,B.F., Keng,T., Barton,A.B. et al.
+  TITLE     The nucleotide sequence of chromosome I from Saccharomyces
+            cerevisiae
+  JOURNAL   Proc. Natl. Acad. Sci. U.S.A. 92 (9), 3809-3813 (1995)
+   PUBMED   7731988
+REFERENCE   3  (bases 1 to 230218)
+  CONSRTM   NCBI Genome Project
+  TITLE     Direct Submission
+  JOURNAL   Submitted (11-JAN-2022) National Center for Biotechnology
+            Information, NIH, Bethesda, MD 20894, USA
+REFERENCE   4  (bases 1 to 230218)
+  CONSRTM   Saccharomyces Genome Database
+  TITLE     Direct Submission
+  JOURNAL   Submitted (31-MAR-2011) Department of Genetics, Stanford
+            University, Stanford, CA 94305-5120, USA
+  REMARK    Sequence update by submitter
+REFERENCE   5  (bases 1 to 230218)
+  CONSRTM   Saccharomyces Genome Database
+  TITLE     Direct Submission
+  JOURNAL   Submitted (11-DEC-2009) Department of Genetics, Stanford
+            University, Stanford, CA 94305-5120, USA
+COMMENT     REVIEWED REFSEQ: This record has been curated by SGD. The reference
+            sequence is identical to BK006935.
+            On Apr 26, 2011 this sequence version replaced NC_001133.8.
+            
+            ##Genome-Annotation-Data-START##
+            Annotation Provider :: SGD
+            Annotation Status   :: Full Annotation
+            Annotation Version  :: R64-3-1
+            URL                 :: http://www.yeastgenome.org/
+            ##Genome-Annotation-Data-END##
+            COMPLETENESS: full length.
+FEATURES             Location/Qualifiers
+     source          1..300
+                     /organism="Saccharomyces cerevisiae S288C"
+                     /mol_type="genomic DNA"
+                     /strain="S288C"
+                     /db_xref="taxon:559292"
+                     /chromosome="I"
+     telomere        complement(1..200)
+                     /note="TEL01L; Telomeric region on the left arm of
+                     Chromosome I; composed of an X element core sequence, X
+                     element combinatorial repeats, and a short terminal
+                     stretch of telomeric repeats"
+                     /db_xref="SGD:S000028862"
+     rep_origin      707..776
+                     /note="ARS102; Autonomously Replicating Sequence"
+                     /db_xref="SGD:S000121252"
+     gene            complement(<1807..>2169)
+                     /gene="PAU8"
+                     /locus_tag="YAL068C"
+                     /db_xref="GeneID:851229"
+     mRNA            complement(<1807..>2169)
+                     /gene="PAU8"
+                     /locus_tag="YAL068C"
+                     /product="seripauperin PAU8"
+                     /transcript_id="NM_001180043.1"
+                     /db_xref="GeneID:851229"
+     CDS             1..180
+                     /gene="TEST1 Downstream"
+                     /locus_tag="TEST1 Downstream"
+                     /experiment="EXISTENCE:mutant phenotype:GO:0030437
+                     ascospore formation [PMID:12586695]"
+                     /experiment="EXISTENCE:mutant phenotype:GO:0045944
+                     positive regulation of transcription by RNA polymerase II
+                     [PMID:12586695]"
+                     /note="hypothetical protein; member of the seripauperin
+                     multigene family encoded mainly in subtelomeric regions"
+                     /codon_start=1
+                     /product="seripauperin PAU8"
+                     /protein_id="NP_009332.1"
+                     /db_xref="GeneID:851229"
+                     /db_xref="SGD:S000002142"
+                     /translation="MVKLTSIAAGVAAIAATASATTTLAQSDERVNLVELGVYVSDIR
+                     AHLAQYYMFQAAHPTETYPVEVAEAVFNYGDFTTMLTGIAPDQVTRMITGVPWYSSRL
+                     KPAISSALSKDGIYTIAN"
+      CDS            1..180
+                     /gene="TEST1 Upstream"
+                     /locus_tag="TEST1 Upstream"
+                     /experiment="EXISTENCE:mutant phenotype:GO:0030437
+                     ascospore formation [PMID:12586695]"
+                     /experiment="EXISTENCE:mutant phenotype:GO:0045944
+                     positive regulation of transcription by RNA polymerase II
+                     [PMID:12586695]"
+                     /note="hypothetical protein; member of the seripauperin
+                     multigene family encoded mainly in subtelomeric regions"
+                     /codon_start=1
+                     /product="seripauperin PAU8"
+                     /protein_id="NP_009332.1"
+                     /db_xref="GeneID:851229"
+                     /db_xref="SGD:S000002142"
+                     /translation="MVKLTSIAAGVAAIAATASATTTLAQSDERVNLVELGVYVSDIR
+                     AHLAQYYMFQAAHPTETYPVEVAEAVFNYGDFTTMLTGIAPDQVTRMITGVPWYSSRL
+                     KPAISSALSKDGIYTIAN"
+ORIGIN      
+        1 atgcaccaca tgcacatgac cacacaccac accacacacc accttaggcc cacacacaca
+       61 catcctaaca ctaccctaac acagccctaa tctaaccctg gccaacctgt ctctcaactt
+      121 accctccatt accctgcctc cactcgttac cctgtcccat tcaaccatac cactccgtga
+      181 taaaaaaaaa
+//
