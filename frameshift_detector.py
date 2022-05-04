@@ -100,7 +100,7 @@ class Frameshift:
         self.start_pos = start_pos
         self.stop_pos = stop_pos
         self.stop_codon = 'None'
-        self.frameshifted_seq = self.get_frameshifted_seq()
+        self.get_frameshifted_seq()
 
     def get_original_seq(self):
         '''
@@ -118,22 +118,27 @@ class Frameshift:
             (string): string for the frameshifted sequence with spacing between codons
         '''
         frameshifted_seq = ''
+        frameshifted_translate = ''
         extended_sequence = str(self.genome_feature.spliced_sequence) + str(self.genome_feature.downstream_region)
         if self.case == 'Downstream':
             cur_pos = self.start_pos
             while extended_sequence[cur_pos:cur_pos+3] not in params['stop_codons'] and (cur_pos-self.start_pos < params['ustream_limit']):
                 if cur_pos == self.heptamer_location:
                     frameshifted_seq += str(extended_sequence[cur_pos:cur_pos+3]) + ' '
+                    frameshifted_translate += str(Seq(extended_sequence[cur_pos:cur_pos+3]).translate())
                     frameshifted_seq += str(extended_sequence[cur_pos+3:cur_pos+4]) + ' '
                     cur_pos += 4
                 else:
                     frameshifted_seq += str(extended_sequence[cur_pos:cur_pos+3]) + ' '
+                    frameshifted_translate += str(Seq(extended_sequence[cur_pos:cur_pos+3]).translate())
                     cur_pos += 3
                 
             frameshifted_seq += str(extended_sequence[cur_pos:cur_pos+3])
             if str(extended_sequence[cur_pos:cur_pos+3]) in params['stop_codons']:
                 self.stop_codon = str(extended_sequence[cur_pos:cur_pos+3])
-            return frameshifted_seq
+                print('STOP: ',self.stop_codon)
+            self.frameshifted_seq = frameshifted_seq
+            self.frameshifted_translate = frameshifted_translate
 
 
 
@@ -252,9 +257,7 @@ def find_downstream_frameshift(feature, shift, ustream_limit, stop_codons, signa
             if x*3+1 in destination_stop_codon_pos:
                 print(colored(feature.spliced_sequence[x*3+1:x*3+1+3], 'red'), end=' ')
             else:
-                print(feature.spliced_sequence[x*3+1:x*3+1+3], end=' ')
-        # continue until reach fs stop codon
-        
+                print(feature.spliced_sequence[x*3+1:x*3+1+3], end=' ')        
         print()
 
 
@@ -303,9 +306,11 @@ def write_to_txt(output_filename):
                 outfile.write('\nFrameshift Stop Codon: ' + fs.stop_codon)
                 outfile.write('\nOriginal Location: [' + str(fs.genome_feature.location))
                 outfile.write('\nOriginal Sequence:\n' + fs.get_original_seq())
+                outfile.write('\nOriginal Translate:\n' + str(fs.genome_feature.spliced_sequence.translate()))
                 outfile.write('\nFrameshift Location: [' + str(fs.genome_feature.get_true_pos(fs.start_pos)) + 
                 ':' + str(fs.genome_feature.get_true_pos(fs.stop_pos)) + ']')
-                outfile.write('\nFrameshifted Sequence:\n' + fs.frameshifted_seq)
+                outfile.write('\nFrameshifted Sequence:\n' + str(fs.frameshifted_seq))
+                outfile.write('\nFrameshifted Translate:\n' + str(fs.frameshifted_translate))
 
 
         
