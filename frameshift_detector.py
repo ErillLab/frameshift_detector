@@ -99,6 +99,8 @@ class Frameshift:
         self.heptamer_location = heptamer_location
         self.start_pos = start_pos
         self.stop_pos = stop_pos
+        self.stop_codon = 'None'
+        self.frameshifted_seq = self.get_frameshifted_seq()
 
     def get_original_seq(self):
         '''
@@ -129,6 +131,8 @@ class Frameshift:
                     cur_pos += 3
                 
             frameshifted_seq += str(extended_sequence[cur_pos:cur_pos+3])
+            if str(extended_sequence[cur_pos:cur_pos+3]) in params['stop_codons']:
+                self.stop_codon = str(extended_sequence[cur_pos:cur_pos+3])
             return frameshifted_seq
 
 
@@ -287,19 +291,21 @@ def write_to_txt(output_filename):
     '''
     with open(output_filename+'.txt','w') as outfile:
         for fs in detected_frameshifts:
-            outfile.write('\n\nAccession: ' + fs.genome_feature.accession)
-            outfile.write('\nDescription: ' + fs.genome_feature.description)
-            outfile.write('\nLocus Tag: ' + fs.genome_feature.locus_tag)
-            outfile.write('\nProtein ID: ' + fs.genome_feature.protein_id)
-            outfile.write('\nProduct: ' + fs.genome_feature.product)
-            outfile.write('\nStrand: ' + str(fs.genome_feature.strand))
-            outfile.write('\nCase: ' + str(fs.case))
-            outfile.write('\nSignal Found: ' + fs.signal_found)
-            outfile.write('\nOriginal Location: [' + str(fs.genome_feature.location))
-            outfile.write('\nOriginal Sequence:\n' + fs.get_original_seq())
-            outfile.write('\nFrameshift Location: [' + str(fs.genome_feature.get_true_pos(fs.start_pos)) + 
-            ':' + str(fs.genome_feature.get_true_pos(fs.stop_pos)) + ']')
-            outfile.write('\nFrameshifted Sequence:\n' + fs.get_frameshifted_seq())
+            if fs.stop_codon != 'None':
+                outfile.write('\n\nAccession: ' + fs.genome_feature.accession)
+                outfile.write('\nDescription: ' + fs.genome_feature.description)
+                outfile.write('\nLocus Tag: ' + fs.genome_feature.locus_tag)
+                outfile.write('\nProtein ID: ' + fs.genome_feature.protein_id)
+                outfile.write('\nProduct: ' + fs.genome_feature.product)
+                outfile.write('\nStrand: ' + str(fs.genome_feature.strand))
+                outfile.write('\nCase: ' + str(fs.case))
+                outfile.write('\nSignal Found: ' + fs.signal_found)
+                outfile.write('\nFrameshift Stop Codon: ' + fs.stop_codon)
+                outfile.write('\nOriginal Location: [' + str(fs.genome_feature.location))
+                outfile.write('\nOriginal Sequence:\n' + fs.get_original_seq())
+                outfile.write('\nFrameshift Location: [' + str(fs.genome_feature.get_true_pos(fs.start_pos)) + 
+                ':' + str(fs.genome_feature.get_true_pos(fs.stop_pos)) + ']')
+                outfile.write('\nFrameshifted Sequence:\n' + fs.frameshifted_seq)
 
 
         

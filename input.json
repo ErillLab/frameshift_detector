@@ -7,8 +7,8 @@
     "genome_path" : "genome_data",
     "frame" : 1,
     "outfile_name" : "Saccharomyces_cervisiae_S288C",
-    "ustream_limit" : 5000,
-    "dstream_limit" : 5000,
+    "ustream_limit" : 10000,
+    "dstream_limit" : 10000,
     "stop_codons" : ["TAG","TAA","TGA"],
     "start_codons" : ["ATG"],
     "signals": [["CTTAGGC",10]]
