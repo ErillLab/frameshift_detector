@@ -20,69 +20,37 @@ class GenomeFeature:
     '''
     Contains information about a specific feature pulled from a Genbank file.
     '''
-    def __init__(self, nuc_acc, nuc_desc, curr_feat):
+    def __init__(self, nuc_acc, nuc_desc, feature):
         # Basic feature metadata
         self.accession = nuc_acc
         self.description = nuc_desc
-        self.curr_feat = curr_feat
+        self.feature = feature
+        self.type = feature.type
+        self.strand = feature.strand
+        self.location = feature.location
+        self.locus_tag = feature.qualifiers['locus_tag'][0]
+        self.protein_id = feature.qualifiers['protein_id'][0]
+        self.product = feature.qualifiers['product'][0]
         # If CDS has multiple exons
-        if self.curr_feat.location_operator == 'join':
+        if self.feature.location_operator == 'join':
             if args.verbose: print('Feature has multiple exons')
+            self.unspliced_sequence = self.get_unspliced_DNA()
             self.spliced_sequence = self.get_spliced_DNA()[0]
             self.splice_seq_true_positions = self.get_spliced_DNA()[1]
         # If CDS has one exon
         else:
-            self.spliced_sequence = nucrec[self.curr_feat.location.start:self.curr_feat.location.end].seq
-            self.splice_seq_true_positions = list(range(int(self.curr_feat.location.start), int(self.curr_feat.location.end)+1))
-        self.spliced_start_pos = 0
-        self.spliced_stop_pos = len(self.spliced_sequence)-3
+            self.unspliced_sequence = nucrec[self.location.start:self.location.end].seq
+            self.spliced_sequence = nucrec[self.location.start:self.location.end].seq
+            self.splice_seq_true_positions = list(range(int(self.location.start), int(self.location.end)+1))
     
-    def set_prev_feat(self, feat):
-        '''
-        Set the prev feature, used primarily in the upstream case
-        Parameters:
-            feat (GenomeFeature obj): the previous feature
-        Return:
-            None. Sets prev_feat member variable
-        '''
-        self.prev_feat = feat
-    
-    def set_next_feat(self, feat):
-        '''
-        Set the next feature, used primarily in the downstream case
-        Parameters:
-            feat (GenomeFeature obj): the next feature
-        Return:
-            None. Sets next_feat member variable
-        '''
-        self.next_feat = feat
-        if self.next_feat != None: 
-            # Append next feature to the end of the current feature
-            self.spliced_sequence += feat.spliced_sequence
-            # Append next feature's true positions to current feature's true positions
-            self.splice_seq_true_positions.extend(feat.splice_seq_true_positions) 
-
-    def get_next_feat_metadata(self):
-        '''
-        Get next feature's metadata (locus tag, prot id, and product)
-        Return:
-            output (string): string of next feature's metadata
-        '''
-        output = ''
-        if self.next_feat != None:
-            output += '\nNext Feat Locus Tag: ' + self.next_feat.curr_feat.qualifiers['locus_tag'][0]
-            output += '\nNext Feat Protein ID: ' + self.next_feat.curr_feat.qualifiers['protein_id'][0]
-            output += '\nNext Feat Product: ' + self.next_feat.curr_feat.qualifiers['product'][0]
-        return output
-
     def get_unspliced_DNA(self):
         '''
-        Keep introns in the feature's DNA sequence
+        Remove introns from the DNA sequence for the genome feature
         Return:
             unspliced_seq (seq object): unspliced DNA sequence
         '''
-        first_exon_start = self.curr_feat.location.parts[0].start # start of first exon
-        last_exon_end = self.curr_feat.location.parts[-1].end # end of last exon
+        first_exon_start = self.location.parts[0].start # start of first exon
+        last_exon_end = self.location.parts[-1].end # end of last exon
         unspliced_seq = nucrec[first_exon_start:last_exon_end].seq
         return unspliced_seq
 
@@ -91,11 +59,11 @@ class GenomeFeature:
         Combines all exons into one sequence for the genome feature
         Return:
             (seq object, [int]): tuple containing the spliced sequence [0] and an int array of 
-            the true positions for the nucrec [1]
+            the true positions for the nucrec
         '''
         sequence_string = ""
         true_positions = []
-        for part in self.curr_feat.location.parts:
+        for part in self.location.parts:
             #print(part)
             true_positions.extend(list(range(int(part.start), int(part.end)+1)))
             sequence_string += str(nucrec[part.start:part.end].seq)
@@ -105,7 +73,7 @@ class GenomeFeature:
 
     def get_true_pos(self, spliced_sequence_pos):
         '''
-        Returns the true nucrec position given a spliced sequence position
+        Returns nucrec position given a spliced sequence position
         Parameters:
             spliced_sequence_pos (int): position in the spliced DNA sequence
         Return:
@@ -129,7 +97,7 @@ class Frameshift:
 
     def get_original_seq(self):
         '''
-        Adds space between every 3 base pairs in original sequence
+        Adds space between 3 base pairs in original sequence
         Return:
             (string): string for the original sequence with spacing between codons
         '''
@@ -138,7 +106,7 @@ class Frameshift:
 
     def get_frameshifted_seq(self):
         '''
-        Returns a string of the frameshifted sequence with a space between 3 base pairs
+        Returns a string of the frameshifted sequence with a space between 3 base paids
         Return:
             (string): string for the frameshifted sequence with spacing between codons
         '''
@@ -187,7 +155,7 @@ def download_gbk_files(entrez_email, entrez_api_key, genome_path):
             out_handle.close()
             net_handle.close()
 
-def find_heptamer(feature, signals, start_pos, stop_pos, fs_stop_pos):
+def find_heptamer(feature, signals, start_pos, stop_pos):
     '''
     Search for heptamer in geneome feature within the given range
     Parameters:
@@ -195,8 +163,6 @@ def find_heptamer(feature, signals, start_pos, stop_pos, fs_stop_pos):
         signals [("String", Int)]: array of tuples ("Heptamer", Score)
         start_pos (int): start position of scan
         stop_pos (int): stop position of scan
-        fs_stop (int): the stop position of the frameshift, will be equal to stop_pos in most cases unless 
-        we are near the end of the sequence.
     Return:
         None, prints frameshifted sequence + creates and appends Frameshift object detected_frameshifts array
     '''
@@ -206,7 +172,7 @@ def find_heptamer(feature, signals, start_pos, stop_pos, fs_stop_pos):
         while current_pos < stop_pos-6:
             if str(feature.spliced_sequence[current_pos:current_pos+7]) in signal[0]:
                 print('Found Downstream Heptamer')
-                frameshift = Frameshift(feature, signal[0], 'Downstream', current_pos, 0, fs_stop_pos)
+                frameshift = Frameshift(feature, signal[0], 'Downstream', current_pos, 0, stop_pos)
                 detected_frameshifts.append(frameshift)
                 print_pos = start_pos
                 while print_pos <= stop_pos + 1:
@@ -242,30 +208,28 @@ def find_downstream_frameshift(feature, shift, ustream_limit, stop_codons, signa
         stop_codons ["",""]: array of strings of stop codons
         signals [("String", Int)]: array of tuples ("Heptamer", Score)
     '''
+    if args.verbose: print('\n********** Searching for downstream frameshift **********')
+    source_start_codon_pos = 0
+    source_stop_codon_pos = len(feature.spliced_sequence) - 3 # the stop codon in the source frame
+
     if args.verbose:
-        print('\n********** Searching for downstream frameshift **********')
         print('\nSource Frame: ', end='')
         for x in range(0, len(feature.spliced_sequence)//3):
-            if x == feature.spliced_start_pos:
+            if x == 0:
                 print(colored(feature.spliced_sequence[x*3:x*3+3], 'green'), end=' ')
-            elif x == feature.spliced_stop_pos//3:
-                print(colored(feature.spliced_sequence[x*3:x*3+3], 'red'), end=' ')
+            elif x == len(feature.spliced_sequence)//3 - 1:
+                print(colored(feature.spliced_sequence[x*3:x*3+3], 'red'))
             else:
                 print(feature.spliced_sequence[x*3:x*3+3], end=' ')
-        print()
-    ustream_count = 0
-    # Frameshift + 1 to destination and go downstream from the annotated stop until the first frameshifted stop is reached
-    destination_stop_codon_pos = []
-    current_pos = feature.spliced_stop_pos + shift
-    while feature.spliced_sequence[current_pos:current_pos+3] not in stop_codons and current_pos < len(feature.spliced_sequence):
-        current_pos += 3
 
-    downstream_stop_pos = current_pos
-    if args.verbose: print('Found stop', feature.spliced_sequence[current_pos:current_pos+3])
-    current_pos -=3
-    # From the first downstream stop codon, go back upstream and find the positions of all stop codons in the destination
+    ustream_count = 0
+    # Frameshift + 1 to destination, start at stop + 1, go upstream until we find the first stop codon
+    destination_stop_codon_pos = []
+    current_pos = source_stop_codon_pos + shift
+
     while ustream_count < ustream_limit and current_pos >= 0:
         if feature.spliced_sequence[current_pos:current_pos+3] in stop_codons:
+            roi_left = current_pos # found first +1 destination frame stop codon
             destination_stop_codon_pos.append(current_pos)
         current_pos -= 3
         ustream_count += 3
@@ -285,26 +249,26 @@ def find_downstream_frameshift(feature, shift, ustream_limit, stop_codons, signa
         print('\nDestination stop positions: ', end='')
         for stop_pos in destination_stop_codon_pos:
             print(stop_pos, end=', ')
-
-    # Search for the heptamers in the ROIS
+    
     if args.verbose: print('\n\n...Searching for heptamers...')
+    # search for signal in roi's
     for roi_count in range(0,len(destination_stop_codon_pos)):
         if roi_count == 0: 
             # source start to destination first stop
-            find_heptamer(feature, signals, feature.spliced_start_pos, destination_stop_codon_pos[roi_count]-1, destination_stop_codon_pos[roi_count]-1)
+            find_heptamer(feature, signals, source_start_codon_pos, destination_stop_codon_pos[roi_count]-1)
             if len(destination_stop_codon_pos) == 1:
                 # destination stop to source stop
-                find_heptamer(feature, signals, destination_stop_codon_pos[roi_count]-1, feature.spliced_stop_pos, downstream_stop_pos)
+                find_heptamer(feature, signals, destination_stop_codon_pos[roi_count]-1, source_stop_codon_pos)
                 break
             else:
                 # destination first stop to next stop
-                find_heptamer(feature, signals, destination_stop_codon_pos[roi_count]-1, destination_stop_codon_pos[roi_count+1]-1, destination_stop_codon_pos[roi_count+1]-1)
+                find_heptamer(feature, signals, destination_stop_codon_pos[roi_count]-1, destination_stop_codon_pos[roi_count+1]-1)
         elif roi_count == len(destination_stop_codon_pos)-1: 
             # destination stop to source stop
-            find_heptamer(feature, signals, destination_stop_codon_pos[roi_count]-1, feature.spliced_stop_pos, downstream_stop_pos)
+            find_heptamer(feature, signals, destination_stop_codon_pos[roi_count]-1, source_stop_codon_pos)
         else:
             # destination stop to next destination stop
-            find_heptamer(feature, signals, destination_stop_codon_pos[roi_count]-1, destination_stop_codon_pos[roi_count+1]-1, destination_stop_codon_pos[roi_count+1]-1)
+            find_heptamer(feature, signals, destination_stop_codon_pos[roi_count]-1, destination_stop_codon_pos[roi_count+1]-1)
 
 def write_to_txt(output_filename):
     '''
@@ -314,14 +278,13 @@ def write_to_txt(output_filename):
         for fs in detected_frameshifts:
             outfile.write('\n\nAccession: ' + fs.genome_feature.accession)
             outfile.write('\nDescription: ' + fs.genome_feature.description)
-            outfile.write('\nLocus Tag: ' + fs.genome_feature.curr_feat.qualifiers['locus_tag'][0])
-            outfile.write('\nProtein ID: ' + fs.genome_feature.curr_feat.qualifiers['protein_id'][0])
-            outfile.write('\nProduct: ' + fs.genome_feature.curr_feat.qualifiers['product'][0])
-            outfile.write(fs.genome_feature.get_next_feat_metadata())
-            outfile.write('\nStrand: ' + str(fs.genome_feature.curr_feat.strand))
+            outfile.write('\nLocus Tag: ' + fs.genome_feature.locus_tag)
+            outfile.write('\nProtein ID: ' + fs.genome_feature.protein_id)
+            outfile.write('\nProduct: ' + fs.genome_feature.product)
+            outfile.write('\nStrand: ' + str(fs.genome_feature.strand))
             outfile.write('\nCase: ' + str(fs.case))
             outfile.write('\nSignal Found: ' + fs.signal_found)
-            outfile.write('\nOriginal Location: [' + str(fs.genome_feature.curr_feat.location))
+            outfile.write('\nOriginal Location: [' + str(fs.genome_feature.location))
             outfile.write('\nOriginal Sequence:\n' + fs.get_original_seq())
             outfile.write('\nFrameshift Location: [' + str(fs.genome_feature.get_true_pos(fs.start_pos)) + 
             ':' + str(fs.genome_feature.get_true_pos(fs.stop_pos)) + ']')
@@ -359,15 +322,12 @@ if __name__ == "__main__":
         # For each feature in the genebank file, create a GenomeFeature object and store in global genome_features array
         for i in range(len(nucrec.features)):
             feat = nucrec.features[i]
-            if (feat.type == 'CDS') and (feat.strand == 1):
-                genome_features.append(GenomeFeature(nuc_acc=nucrec.name, nuc_desc=nucrec.description, curr_feat=feat))
+            if (feat.type == 'CDS'):
+                if (feat.strand == 1):
+                    genome_features.append(GenomeFeature(nuc_acc=nucrec.name, nuc_desc=nucrec.description, feature=feat))
     
         # For each GenomeFeature in genome_features, search for upstream and downstream frameshifts
-        for i in range(0, len(genome_features)):
-            if i == len(genome_features) - 1:
-                genome_features[i].set_next_feat(None)
-            else:
-                genome_features[i].set_next_feat(genome_features[i+1]) # Set next feature to search in downstream
-            find_downstream_frameshift(genome_features[i], params['frame'], params['ustream_limit'], params['stop_codons'], params['signals'])
+        for feature in genome_features:
+            find_downstream_frameshift(feature, params['frame'], params['ustream_limit'], params['stop_codons'], params['signals'])
 
     write_to_txt(params['outfile_name'])
