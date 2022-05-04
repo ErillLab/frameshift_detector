@@ -42,6 +42,7 @@ class GenomeFeature:
             self.unspliced_sequence = nucrec[self.location.start:self.location.end].seq
             self.spliced_sequence = nucrec[self.location.start:self.location.end].seq
             self.splice_seq_true_positions = list(range(int(self.location.start), int(self.location.end)+1))
+        self.downstream_region = self.get_downstream_region()
     
     def get_unspliced_DNA(self):
         '''
@@ -70,6 +71,10 @@ class GenomeFeature:
         #print(sequence_string)
         #print(true_positions,'\n')
         return (Seq(sequence_string), true_positions)
+    
+    def get_downstream_region(self):
+        last_exon_end = self.location.parts[-1].end # end of last exon
+        return nucrec[last_exon_end:last_exon_end+10000].seq
 
     def get_true_pos(self, spliced_sequence_pos):
         '''
@@ -111,16 +116,19 @@ class Frameshift:
             (string): string for the frameshifted sequence with spacing between codons
         '''
         frameshifted_seq = ''
+        extended_sequence = str(self.genome_feature.spliced_sequence) + str(self.genome_feature.downstream_region)
         if self.case == 'Downstream':
             cur_pos = self.start_pos
-            while cur_pos <= self.stop_pos + 3:
+            while extended_sequence[cur_pos:cur_pos+3] not in params['stop_codons'] and (cur_pos-self.start_pos < params['ustream_limit']):
                 if cur_pos == self.heptamer_location:
-                    frameshifted_seq += str(self.genome_feature.spliced_sequence[cur_pos:cur_pos+3]) + ' '
-                    frameshifted_seq += str(self.genome_feature.spliced_sequence[cur_pos+3:cur_pos+4]) + ' '
+                    frameshifted_seq += str(extended_sequence[cur_pos:cur_pos+3]) + ' '
+                    frameshifted_seq += str(extended_sequence[cur_pos+3:cur_pos+4]) + ' '
                     cur_pos += 4
                 else:
-                    frameshifted_seq += str(self.genome_feature.spliced_sequence[cur_pos:cur_pos+3]) + ' '
+                    frameshifted_seq += str(extended_sequence[cur_pos:cur_pos+3]) + ' '
                     cur_pos += 3
+                
+            frameshifted_seq += str(extended_sequence[cur_pos:cur_pos+3])
             return frameshifted_seq
 
 
@@ -241,7 +249,10 @@ def find_downstream_frameshift(feature, shift, ustream_limit, stop_codons, signa
                 print(colored(feature.spliced_sequence[x*3+1:x*3+1+3], 'red'), end=' ')
             else:
                 print(feature.spliced_sequence[x*3+1:x*3+1+3], end=' ')
+        # continue until reach fs stop codon
+        
         print()
+
 
     destination_stop_codon_pos = sorted(destination_stop_codon_pos)
 
@@ -305,6 +316,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     print('Opening input File: ', args.input[0])
+    global params
     with open(args.input[0]) as json_file:  
         params = json.load(json_file)
     
