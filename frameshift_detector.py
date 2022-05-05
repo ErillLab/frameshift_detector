@@ -10,6 +10,7 @@ from Bio import Entrez, SeqIO
 from Bio.Seq import Seq
 import argparse
 import json
+import csv
 import time
 import os
 
@@ -312,6 +313,18 @@ def write_to_txt(output_filename):
                 outfile.write('\nFrameshifted Sequence:\n' + str(fs.frameshifted_seq))
                 outfile.write('\nFrameshifted Translate:\n' + str(fs.frameshifted_translate))
 
+def write_to_csv(output_filename):
+    fields = ['Accession', 'Description', 'Locus Tag', 'Protein ID', 'Product', 'Strand', 'Case', 'Signal', 'Stop Codon', 
+    'Original Location', 'Frameshift Location', 'Original Product', 'Frameshift Product', 'Original Sequence', 'Frameshift seq']
+    with open(output_filename + '.csv', 'w', newline='') as csvfile:
+        csvwriter = csv.writer(csvfile)
+        for fs in detected_frameshifts:
+            if fs.stop_codon != 'None':
+                csvwriter.writerow([fs.genome_feature.accession, fs.genome_feature.description, fs.genome_feature.locus_tag,
+                fs.genome_feature.protein_id, fs.genome_feature.product, str(fs.genome_feature.strand), str(fs.case), fs.signal_found,
+                fs.stop_codon, str(fs.genome_feature.location), [str(fs.genome_feature.get_true_pos(fs.start_pos)) + ':' + 
+                str(fs.genome_feature.get_true_pos(fs.stop_pos))], str(fs.genome_feature.spliced_sequence.translate()),
+                str(fs.frameshifted_translate), fs.get_original_seq(), str(fs.frameshifted_seq)])
 
         
 if __name__ == "__main__":
@@ -354,3 +367,4 @@ if __name__ == "__main__":
             find_downstream_frameshift(feature, params['frame'], params['ustream_limit'], params['stop_codons'], params['signals'])
 
     write_to_txt(params['outfile_name'])
+    write_to_csv(params['outfile_name'])
