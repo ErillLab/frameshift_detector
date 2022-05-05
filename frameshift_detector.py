@@ -43,7 +43,9 @@ class GenomeFeature:
             self.unspliced_sequence = nucrec[self.location.start:self.location.end].seq
             self.spliced_sequence = nucrec[self.location.start:self.location.end].seq
             self.splice_seq_true_positions = list(range(int(self.location.start), int(self.location.end)+1))
-        self.downstream_region = self.get_downstream_region()
+        # Set downstream region (x nucleotides after annotated stop)
+        self.downstream_region = self.get_downstream_region()[0]
+        self.downstream_region_true_pos = self.get_downstream_region()[1]
     
     def get_unspliced_DNA(self):
         '''
@@ -74,8 +76,16 @@ class GenomeFeature:
         return (Seq(sequence_string), true_positions)
     
     def get_downstream_region(self):
+        '''
+        Adds x downstream nucleotides to an array that can be indexed later
+        Return:
+            (seq object, [int]): tuple containing the downstream sequence [0] and an int array of 
+            the true positions for the nucrec
+        '''
+        true_positions = []
         last_exon_end = self.location.parts[-1].end # end of last exon
-        return nucrec[last_exon_end:last_exon_end+10000].seq
+        true_positions.extend(list(range(int(last_exon_end), int(last_exon_end)+10000)))
+        return (nucrec[last_exon_end:last_exon_end+10000].seq, true_positions)
 
     def get_true_pos(self, spliced_sequence_pos):
         '''
@@ -85,7 +95,8 @@ class GenomeFeature:
         Return:
             true_pos (int): nucrec position
         '''
-        return self.splice_seq_true_positions[spliced_sequence_pos]
+        combined_sequence_pos = self.splice_seq_true_positions + self.downstream_region_true_pos
+        return combined_sequence_pos[spliced_sequence_pos]
 
 
 
@@ -100,6 +111,7 @@ class Frameshift:
         self.heptamer_location = heptamer_location
         self.start_pos = start_pos
         self.stop_pos = stop_pos
+        self.seq_end = 0
         self.stop_codon = 'None'
         self.get_frameshifted_seq()
 
@@ -137,7 +149,7 @@ class Frameshift:
             frameshifted_seq += str(extended_sequence[cur_pos:cur_pos+3])
             if str(extended_sequence[cur_pos:cur_pos+3]) in params['stop_codons']:
                 self.stop_codon = str(extended_sequence[cur_pos:cur_pos+3])
-                print('STOP: ',self.stop_codon)
+                self.seq_end = cur_pos + 4
             self.frameshifted_seq = frameshifted_seq
             self.frameshifted_translate = frameshifted_translate
 
@@ -309,7 +321,7 @@ def write_to_txt(output_filename):
                 outfile.write('\nOriginal Sequence:\n' + fs.get_original_seq())
                 outfile.write('\nOriginal Translate:\n' + str(fs.genome_feature.spliced_sequence.translate()))
                 outfile.write('\nFrameshift Location: [' + str(fs.genome_feature.get_true_pos(fs.start_pos)) + 
-                ':' + str(fs.genome_feature.get_true_pos(fs.stop_pos)) + ']')
+                ':' + str(fs.genome_feature.get_true_pos(fs.seq_end)) + ']')
                 outfile.write('\nFrameshifted Sequence:\n' + str(fs.frameshifted_seq))
                 outfile.write('\nFrameshifted Translate:\n' + str(fs.frameshifted_translate))
 
@@ -323,7 +335,7 @@ def write_to_csv(output_filename):
                 csvwriter.writerow([fs.genome_feature.accession, fs.genome_feature.description, fs.genome_feature.locus_tag,
                 fs.genome_feature.protein_id, fs.genome_feature.product, str(fs.genome_feature.strand), str(fs.case), fs.signal_found,
                 fs.stop_codon, str(fs.genome_feature.location), [str(fs.genome_feature.get_true_pos(fs.start_pos)) + ':' + 
-                str(fs.genome_feature.get_true_pos(fs.stop_pos))], str(fs.genome_feature.spliced_sequence.translate()),
+                str(fs.genome_feature.get_true_pos(fs.seq_end))], str(fs.genome_feature.spliced_sequence.translate()),
                 str(fs.frameshifted_translate), fs.get_original_seq(), str(fs.frameshifted_seq)])
 
         
