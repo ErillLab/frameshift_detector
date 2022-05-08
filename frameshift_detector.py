@@ -364,11 +364,11 @@ if __name__ == "__main__":
             feat = nucrec.features[i]
             if (feat.type == 'CDS'):
                 if (feat.strand == 1):
-                    genome_features.append(GenomeFeature(nuc_acc=nucrec.name, nuc_desc=nucrec.description, feature=feat))
+                    genome_features.append(GenomeFeature(nuc_acc=nucrec.id, nuc_desc=nucrec.description, feature=feat))
     
-        # For each GenomeFeature in genome_features, search for upstream and downstream frameshifts
-        for feature in genome_features:
-            find_downstream_frameshift(feature, params['frame'], params['ustream_limit'], params['stop_codons'], params['signals'])
+    # For each GenomeFeature in genome_features, search for upstream and downstream frameshifts
+    for feature in genome_features:
+       find_downstream_frameshift(feature, params['frame'], params['ustream_limit'], params['stop_codons'], params['signals'])
 
     # Write out results
     write_to_txt(params['outfile_name'])
