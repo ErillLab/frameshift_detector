@@ -5,6 +5,7 @@ Purpose: To identify new +1 programmed ribosomal frameshifts through the detecti
 Example usage: python3 frameshift_detector.py input.json --verbose 
 '''
 
+from calendar import c
 from termcolor import colored
 from Bio import Entrez, SeqIO
 from Bio.Seq import Seq
@@ -44,6 +45,9 @@ class GenomeFeature:
         # Set downstream region (x nucleotides after annotated stop)
         self.downstream_region_seq = self.get_downstream_region()[0]
         self.downstream_region_true_pos = self.get_downstream_region()[1]
+        # Set upstream region (x nucleotides before annotated start)
+        self.upstream_region_seq = self.get_upstream_region()[0]
+        self.upstream_region_true_pos = self.get_upstream_region()[1]
 
     def get_spliced_DNA(self):
         '''
@@ -74,6 +78,16 @@ class GenomeFeature:
         downstream_seq = nucrec[last_exon_end:last_exon_end+10000].seq
         true_positions.extend(list(range(int(last_exon_end), int(last_exon_end)+10000)))
         return (downstream_seq, true_positions)
+
+    def get_upstream_region(self):
+        first_exon_start = self.location.parts[-1].start # start of first exon
+        if first_exon_start < 10000:
+            upstream_seq = nucrec[1:first_exon_start].seq
+            true_positions = list(range(1, int(first_exon_start)+1))
+        else:
+            upstream_seq = nucrec[first_exon_start-10000:first_exon_start].seq
+            true_positions = list(range(first_exon_start-10000, int(first_exon_start)+1))
+        return (upstream_seq, true_positions)
 
     def get_true_pos(self, spliced_sequence_pos):
         '''
@@ -175,7 +189,7 @@ def download_gbk_files(entrez_email, entrez_api_key, genome_path):
             out_handle.close()
             net_handle.close()
 
-def find_heptamer(feature, signals, start_pos, stop_pos):
+def find_heptamer(sequence, signals, start_pos, stop_pos, case):
     '''
     Search for heptamer in geneome feature within the given range
     Parameters:
@@ -187,35 +201,121 @@ def find_heptamer(feature, signals, start_pos, stop_pos):
         None, prints frameshift sequence + creates and appends Frameshift object detected_frameshifts array
     '''
     if args.verbose:print('Searching from', start_pos, 'to', stop_pos)
+    #print(sequence[start_pos:stop_pos])
     current_pos = start_pos
     for signal in signals:
         while current_pos < stop_pos-6:
-            if str(feature.spliced_seq[current_pos:current_pos+7]) in signal[0]:
+            if str(sequence[current_pos:current_pos+7]) in signal[0]:
                 print('Found Heptamer', feature.accession, feature.locus_tag, feature.protein_id, feature.product)
-                frameshift = Frameshift(feature, signal[0], 'Downstream', current_pos, 0, stop_pos)
+                frameshift = Frameshift(feature, signal[0], case, current_pos, 0, stop_pos)
                 detected_frameshifts.append(frameshift)
                 print_pos = start_pos
                 while print_pos <= stop_pos + 1:
                     if print_pos == current_pos:
-                        print(colored(feature.spliced_seq[print_pos:print_pos+3], 'green'), end=' ')
-                        print(colored(feature.spliced_seq[print_pos+3:print_pos+4], 'green'), end=' ')
-                        print(colored(feature.spliced_seq[print_pos+4:print_pos+7], 'green'), end=' ')
+                        print(colored(sequence[print_pos:print_pos+3], 'green'), end=' ')
+                        print(colored(sequence[print_pos+3:print_pos+4], 'green'), end=' ')
+                        print(colored(sequence[print_pos+4:print_pos+7], 'green'), end=' ')
                         print_pos += 7
                     else:
-                        print(feature.spliced_seq[print_pos:print_pos+3], end=' ')
+                        print(sequence[print_pos:print_pos+3], end=' ')
                         print_pos += 3
-                print()
-                break
+                break   
+            #print(sequence[current_pos:current_pos+7]) 
             current_pos += 3
 
-def find_upstream_frameshift(feature, shift, dstream_limit, stop_codons, signals):
+def find_start_codon(sequence, start_pos, stop_pos):
+    current_pos = start_pos
+    while current_pos < stop_pos:
+        if sequence[current_pos:current_pos+3] == 'ATG':
+            return current_pos
+        current_pos += 3
+    return -1
+
+def find_upstream_frameshift(feature, shift, ustream_limit, stop_codons, signals):
     '''
-    Search for +1 upstream frameshift in given feature - this is the cases where we frameshift
+    Search for +1 upstream frameshift in given feature - this is the case where we frameshift
     into the annotated gene
     Parameters:
         feature - search for frameshift for this feature
     '''
     if args.verbose: print('\n********** Searching for uptream frameshift **********')
+    
+    extended_seq = str(feature.upstream_region_seq) + str(feature.spliced_seq) 
+    destination_start_codon_pos = len(extended_seq) - len(feature.spliced_seq)
+    destination_stop_codon_pos = len(extended_seq) - 3
+    roi_right = destination_stop_codon_pos
+    if args.verbose:
+        # Print source frame with spacing 
+        if args.verbose:
+            print('\nDestination Frame: ', end='')
+            for x in range(0, len(feature.spliced_seq)//3):
+                if x == 0:
+                    print(colored(feature.spliced_seq[x*3:x*3+3], 'green'), end=' ')
+                elif x == len(feature.spliced_seq)//3 - 1:
+                    print(colored(feature.spliced_seq[x*3:x*3+3], 'red'))
+                else:
+                    print(feature.spliced_seq[x*3:x*3+3], end=' ')
+
+    ustream_count = 0
+    # Move to -1 reading frame, go upstream until we find the first stop codon
+    current_pos = destination_start_codon_pos
+    #current_pos = destination_start_codon_pos - shift
+    while ustream_count < ustream_limit and current_pos >= 0:
+        if extended_seq[current_pos:current_pos+3] in stop_codons:
+            roi_left = current_pos
+            break
+        current_pos -= 3
+        ustream_count += 3
+    
+    # Print destination frame with spacing
+    if args.verbose:
+        print('\nSource Frame Before -1: ', end='')
+        print_pos = current_pos
+        while print_pos <= (len(extended_seq)):
+            if extended_seq[print_pos:print_pos+3] == 'ATG':
+                print(colored(extended_seq[print_pos:print_pos+3], 'green'), end=' ')
+            elif extended_seq[print_pos:print_pos+3] in stop_codons:
+                print(colored(extended_seq[print_pos:print_pos+3], 'red'), end=' ')
+            else:
+                print(extended_seq[print_pos:print_pos+3], end=' ')
+            print_pos += 3
+        print()
+
+    # Shift source frame to -1
+    current_pos = current_pos - shift
+    # Print -1 shifted frame
+    if args.verbose:
+        print('\nSource Frame After -1: ', end='')
+        print_pos = current_pos
+        while print_pos <= (len(extended_seq)):
+            if extended_seq[print_pos:print_pos+3] == 'ATG':
+                print(colored(extended_seq[print_pos:print_pos+3], 'green'), end=' ')
+            elif extended_seq[print_pos:print_pos+3] in stop_codons:
+                print(colored(extended_seq[print_pos:print_pos+3], 'red'), end=' ')
+            else:
+                print(extended_seq[print_pos:print_pos+3], end=' ')
+            print_pos += 3
+        print('\n')
+
+    # Search for stop codons in -1 frame
+    source_stop_codon_pos = []
+    while current_pos < destination_stop_codon_pos:
+        if extended_seq[current_pos:current_pos+3] in stop_codons:
+            source_stop_codon_pos.append(current_pos)
+            #print(current_pos, extended_seq[current_pos:current_pos+3])
+        current_pos += 3
+    
+    for roi in range(0,len(source_stop_codon_pos)-1):
+         # if first roi, look for start codon from roi left to source first stop, if found search for heptamer
+         # from start codon to end 
+        if roi == 0:
+            start_codon_pos = find_start_codon(extended_seq, roi_left-1, source_stop_codon_pos[roi]-1)
+            if start_codon_pos != -1:find_heptamer(extended_seq, signals, start_codon_pos, source_stop_codon_pos[roi]-1, 'Upstream')
+        # Else, look for heptamer from destination stop to next destination stop
+        else:
+            start_codon_pos = find_start_codon(extended_seq, source_stop_codon_pos[roi]-1, source_stop_codon_pos[roi+1]-1)
+            if start_codon_pos != -1:find_heptamer(extended_seq, signals, start_codon_pos, source_stop_codon_pos[roi]-1, 'Upstream')
+            
 
 def find_downstream_frameshift(feature, shift, ustream_limit, stop_codons, signals):
     '''
@@ -278,13 +378,13 @@ def find_downstream_frameshift(feature, shift, ustream_limit, stop_codons, signa
     for roi in range(0,len(destination_stop_codon_pos)):
         # if first roi, look for heptamer from source start to destination first stop
         if roi == 0: 
-            find_heptamer(feature, signals, source_start_codon_pos, destination_stop_codon_pos[roi]-1)
+            find_heptamer(feature.spliced_seq, signals, source_start_codon_pos, destination_stop_codon_pos[roi]-1, 'Downstream')
         # If last roi, look for heptamer from destination stop to source stop
         if roi == len(destination_stop_codon_pos)-1: 
-            find_heptamer(feature, signals, destination_stop_codon_pos[roi]-1, source_stop_codon_pos)
+            find_heptamer(feature.spliced_seq, signals, destination_stop_codon_pos[roi]-1, source_stop_codon_pos, 'Downstream')
         # Else, look for heptamer from destination stop to next destination stop
         else:
-            find_heptamer(feature, signals, destination_stop_codon_pos[roi]-1, destination_stop_codon_pos[roi+1]-1)
+            find_heptamer(feature.spliced_seq, signals, destination_stop_codon_pos[roi]-1, destination_stop_codon_pos[roi+1]-1, 'Downstream')
 
 def write_to_txt(output_filename):
     '''
@@ -368,7 +468,8 @@ if __name__ == "__main__":
     
     # For each GenomeFeature in genome_features, search for upstream and downstream frameshifts
     for feature in genome_features:
-       find_downstream_frameshift(feature, params['frame'], params['ustream_limit'], params['stop_codons'], params['signals'])
+        find_downstream_frameshift(feature, params['frame'], params['ustream_limit'], params['stop_codons'], params['signals'])
+        find_upstream_frameshift(feature, params['frame'], params['ustream_limit'], params['stop_codons'], params['signals'])
 
     # Write out results
     write_to_txt(params['outfile_name'])
