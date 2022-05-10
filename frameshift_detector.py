@@ -89,7 +89,7 @@ class GenomeFeature:
             true_positions = list(range(first_exon_start-10000, int(first_exon_start)+1))
         return (upstream_seq, true_positions)
 
-    def get_true_pos(self, spliced_sequence_pos):
+    def get_true_pos_downstream(self, spliced_sequence_pos):
         '''
         Returns nucrec position given a spliced sequence position
         Parameters:
@@ -98,8 +98,21 @@ class GenomeFeature:
             true_pos (int): nucrec position
         '''
         # combine spliced sequence and downstream region position arrays, lookup pos from combined seq
-        combined_sequence_pos = self.upstream_region_true_pos + self.spliced_seq_true_pos + self.downstream_region_true_pos
+        combined_sequence_pos = self.spliced_seq_true_pos + self.downstream_region_true_pos
         return combined_sequence_pos[spliced_sequence_pos]
+   
+    def get_true_pos_upstream(self, spliced_sequence_pos):
+        '''
+        Returns nucrec position given a spliced sequence position
+        Parameters:
+            spliced_sequence_pos (int): position in the spliced DNA sequence
+        Return:
+            true_pos (int): nucrec position
+        '''
+        # combine spliced sequence and downstream region position arrays, lookup pos from combined seq
+        combined_sequence_pos = self.upstream_region_true_pos + self.spliced_seq_true_pos
+        return combined_sequence_pos[spliced_sequence_pos]
+
 
 class Frameshift:
     '''
@@ -426,8 +439,12 @@ def write_to_txt(output_filename):
                 outfile.write('\nOriginal Sequence:\n' + fs.get_original_seq())
                 outfile.write('\nOriginal Product Length: ' + str(len(fs.genome_feature.spliced_seq.translate())))
                 outfile.write('\nOriginal Product:\n' + str(fs.genome_feature.spliced_seq.translate()))
-                outfile.write('\nFrameshift Location: [' + str(fs.genome_feature.get_true_pos(fs.start_pos)) + 
-                ':' + str(fs.genome_feature.get_true_pos(fs.seq_end)) + ']')
+                if fs.case == 'Downstream':
+                    outfile.write('\nFrameshift Location: [' + str(fs.genome_feature.get_true_pos_downstream(fs.start_pos)) + 
+                ':' + str(fs.genome_feature.get_true_pos_downstream(fs.seq_end)) + ']')
+                elif fs.case == 'Upstream':
+                    outfile.write('\nFrameshift Location: [' + str(fs.genome_feature.get_true_pos_upstream(fs.start_pos)) + 
+                ':' + str(fs.genome_feature.get_true_pos_upstream(fs.seq_end)) + ']')
                 outfile.write('\nFrameshift Sequence:\n' + str(fs.frameshift_seq))
                 outfile.write('\nFrameshift Product Length: ' + str(len(fs.frameshift_translation)))
                 outfile.write('\nFrameshift Product:\n' + str(fs.frameshift_translation))
@@ -444,13 +461,47 @@ def write_to_csv(output_filename):
         csvwriter.writerow(fields)
         for fs in detected_frameshifts:
             if fs.stop_codon != 'None':
-                csvwriter.writerow([fs.genome_feature.accession, fs.genome_feature.description, fs.genome_feature.locus_tag,
-                fs.genome_feature.protein_id, fs.genome_feature.product, str(fs.genome_feature.strand), str(fs.case), fs.signal_found,
-                fs.stop_codon, str(fs.genome_feature.location), [str(fs.genome_feature.get_true_pos(fs.start_pos)) + ':' + 
-                str(fs.genome_feature.get_true_pos(fs.seq_end))], str(len(fs.genome_feature.spliced_seq.translate())), 
-                str(len(fs.frameshift_translation)), str(fs.genome_feature.spliced_seq.translate()),
-                str(fs.frameshift_translation), fs.get_original_seq(), str(fs.frameshift_seq)])
-
+                output = []
+                output.append(fs.genome_feature.accession)
+                output.append(fs.genome_feature.description)
+                output.append(fs.genome_feature.locus_tag)
+                output.append(fs.genome_feature.protein_id)
+                output.append(fs.genome_feature.product)
+                output.append(str(fs.genome_feature.strand))
+                output.append(str(fs.case))
+                output.append(fs.signal_found)
+                output.append(fs.stop_codon)
+                output.append(str(fs.genome_feature.location))
+                if fs.case == 'Downstream':
+                    output.append([str(fs.genome_feature.get_true_pos_downstream(fs.start_pos)) + ':' + 
+                    str(fs.genome_feature.get_true_pos_downstream(fs.seq_end))])
+                elif fs.case == 'Upstream':
+                    output.append([str(fs.genome_feature.get_true_pos_upstream(fs.start_pos)) + ':' + 
+                    str(fs.genome_feature.get_true_pos_upstream(fs.seq_end))])
+                output.append(str(len(fs.genome_feature.spliced_seq.translate())))
+                output.append(str(len(fs.frameshift_translation)))
+                output.append(str(fs.genome_feature.spliced_seq.translate()))
+                output.append(str(fs.frameshift_translation))
+                output.append(fs.get_original_seq())
+                output.append(str(fs.frameshift_seq))
+                csvwriter.writerow(output)
+                '''
+                if fs.case == 'Downstream':
+                    csvwriter.writerow([fs.genome_feature.accession, fs.genome_feature.description, fs.genome_feature.locus_tag,
+                    fs.genome_feature.protein_id, fs.genome_feature.product, str(fs.genome_feature.strand), str(fs.case), fs.signal_found,
+                    fs.stop_codon, str(fs.genome_feature.location), [str(fs.genome_feature.get_true_pos_downstream(fs.start_pos)) + ':' + 
+                    str(fs.genome_feature.get_true_pos_downstream(fs.seq_end))], str(len(fs.genome_feature.spliced_seq.translate())), 
+                    str(len(fs.frameshift_translation)), str(fs.genome_feature.spliced_seq.translate()),
+                    str(fs.frameshift_translation), fs.get_original_seq(), str(fs.frameshift_seq)])
+                elif fs.case == 'Upstream':
+                    csvwriter.writerow([fs.genome_feature.accession, fs.genome_feature.description, fs.genome_feature.locus_tag,
+                    fs.genome_feature.protein_id, fs.genome_feature.product, str(fs.genome_feature.strand), str(fs.case), fs.signal_found,
+                    fs.stop_codon, str(fs.genome_feature.location), [str(fs.genome_feature.get_true_pos_upstream(fs.start_pos)) + ':' + 
+                    str(fs.genome_feature.get_true_pos_upstream(fs.seq_end))], str(len(fs.genome_feature.spliced_seq.translate())), 
+                    str(len(fs.frameshift_translation)), str(fs.genome_feature.spliced_seq.translate()),
+                    str(fs.frameshift_translation), fs.get_original_seq(), str(fs.frameshift_seq)])
+                '''
+                    
 if __name__ == "__main__":
     # Create argument parser
     parser = argparse.ArgumentParser(description='Find some frameshifts')
