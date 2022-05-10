@@ -71,7 +71,7 @@ class GenomeFeature:
         Adds x downstream nucleotides to an array 
         Return:
             (seq object, [int]): tuple containing the downstream sequence [0] and an int array of 
-            the true positions for the nucrec
+            the true positions for the nucrec [1]
         '''
         true_positions = []
         last_exon_end = self.location.parts[-1].end # end of last exon
@@ -80,6 +80,12 @@ class GenomeFeature:
         return (downstream_seq, true_positions)
 
     def get_upstream_region(self):
+        '''
+        Adds x upstream nucleotides to an array 
+        Return:
+            (seq object, [int]): tuple containing the upstream sequence [0] and an int array of 
+            the true positions for the nucrec [1]
+        '''
         first_exon_start = self.location.parts[-1].start # start of first exon
         if first_exon_start < 10000:
             upstream_seq = nucrec[1:first_exon_start].seq
@@ -91,7 +97,7 @@ class GenomeFeature:
 
     def get_true_pos_downstream(self, spliced_sequence_pos):
         '''
-        Returns nucrec position given a spliced sequence position
+        Returns nucrec position given a spliced sequence position for downstream case
         Parameters:
             spliced_sequence_pos (int): position in the spliced DNA sequence
         Return:
@@ -103,7 +109,7 @@ class GenomeFeature:
    
     def get_true_pos_upstream(self, spliced_sequence_pos):
         '''
-        Returns nucrec position given a spliced sequence position
+        Returns nucrec position given a spliced sequence position for upstream case
         Parameters:
             spliced_sequence_pos (int): position in the spliced DNA sequence
         Return:
@@ -272,7 +278,7 @@ def find_upstream_frameshift(feature, shift, ustream_limit, stop_codons, signals
     destination_stop_codon_pos = len(extended_seq) - 3
     roi_right = destination_stop_codon_pos
     if args.verbose:
-        # Print source frame with spacing 
+        # Print destination frame with spacing 
         if args.verbose:
             print('\nDestination Frame: ', end='')
             for x in range(0, len(feature.spliced_seq)//3):
@@ -284,9 +290,7 @@ def find_upstream_frameshift(feature, shift, ustream_limit, stop_codons, signals
                     print(feature.spliced_seq[x*3:x*3+3], end=' ')
 
     ustream_count = 0
-    # Move to -1 reading frame, go upstream until we find the first stop codon
     current_pos = destination_start_codon_pos
-    #current_pos = destination_start_codon_pos - shift
     while ustream_count < ustream_limit and current_pos >= 0:
         if extended_seq[current_pos:current_pos+3] in stop_codons:
             roi_left = current_pos
@@ -294,7 +298,7 @@ def find_upstream_frameshift(feature, shift, ustream_limit, stop_codons, signals
         current_pos -= 3
         ustream_count += 3
     
-    # Print destination frame with spacing
+    # Print source before -1 shift with spacing
     if args.verbose:
         print('\nSource Frame Before -1: ', end='')
         print_pos = current_pos
@@ -308,9 +312,9 @@ def find_upstream_frameshift(feature, shift, ustream_limit, stop_codons, signals
             print_pos += 3
         print()
 
-    # Shift source frame to -1
+    # Shift to source frame to -1 from first upstream stop in destination
     current_pos = current_pos - shift
-    # Print -1 shifted frame
+    # Print -1 shifted source frame
     if args.verbose:
         print('\nSource Frame After -1: ', end='')
         print_pos = current_pos
