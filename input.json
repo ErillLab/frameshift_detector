@@ -11,5 +11,5 @@
     "dstream_limit" : 10000,
     "stop_codons" : ["TAG","TAA","TGA"],
     "start_codons" : ["ATG"],
-    "signals": [["CTTAGGC",10]]
+    "signals": [["CTTAGGC",10], ["CTTAGTT", 10], ["AAATAAA", 5], ["CTTTAAC", 5], ["CTTTAAC", 5]]
 }
