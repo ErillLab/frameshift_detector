@@ -22,25 +22,30 @@ class GenomeFeature:
     '''
     Contains information about a specific feature pulled from a Genbank file.
     '''
-    def __init__(self, nuc_acc, nuc_desc, feature):
+    def __init__(self, nucrec, nuc_acc, nuc_desc, feature, strand):
         # Basic feature metadata
+        self.nucrec = nucrec
         self.accession = nuc_acc
         self.description = nuc_desc
         self.feature = feature
         self.type = feature.type
-        self.strand = feature.strand
+        self.strand = strand
         self.location = feature.location
+        self.location_str = self.location
+        if strand == '-1':
+            self.location_str = ''
+            for part in feature.location.parts:
+                self.location_str += '[' + str(len(self.nucrec) - part.start) + ',' + str(len(self.nucrec) - part.end) + ']'
         self.locus_tag = feature.qualifiers['locus_tag'][0]
         self.protein_id = feature.qualifiers['protein_id'][0]
         self.product = feature.qualifiers['product'][0]
         # If CDS has multiple exons
         if self.feature.location_operator == 'join':
-            if args.verbose: print('Feature has multiple exons')
             self.spliced_seq = self.get_spliced_DNA()[0]
             self.spliced_seq_true_pos = self.get_spliced_DNA()[1]
         # If CDS has one exon
         else:
-            self.spliced_seq = nucrec[self.location.start:self.location.end].seq
+            self.spliced_seq = self.nucrec[self.location.start:self.location.end].seq
             self.spliced_seq_true_pos = list(range(int(self.location.start), int(self.location.end)+1))
         # Set downstream region (x nucleotides after annotated stop)
         self.downstream_region_seq = self.get_downstream_region()[0]
@@ -61,7 +66,7 @@ class GenomeFeature:
         for part in self.location.parts:
             #print(part)
             true_positions.extend(list(range(int(part.start), int(part.end)+1)))
-            sequence_string += str(nucrec[part.start:part.end].seq)
+            sequence_string += str(self.nucrec[part.start:part.end].seq)
         #print(sequence_string)
         #print(true_positions,'\n')
         return (Seq(sequence_string), true_positions)
@@ -75,7 +80,7 @@ class GenomeFeature:
         '''
         true_positions = []
         last_exon_end = self.location.parts[-1].end # end of last exon
-        downstream_seq = nucrec[last_exon_end:last_exon_end+10000].seq
+        downstream_seq = self.nucrec[last_exon_end:last_exon_end+10000].seq
         true_positions.extend(list(range(int(last_exon_end), int(last_exon_end)+10000)))
         return (downstream_seq, true_positions)
 
@@ -88,10 +93,10 @@ class GenomeFeature:
         '''
         first_exon_start = self.location.parts[-1].start # start of first exon
         if first_exon_start < 10000:
-            upstream_seq = nucrec[1:first_exon_start].seq
+            upstream_seq = self.nucrec[1:first_exon_start].seq
             true_positions = list(range(1, int(first_exon_start)+1))
         else:
-            upstream_seq = nucrec[first_exon_start-10000:first_exon_start].seq
+            upstream_seq = self.nucrec[first_exon_start-10000:first_exon_start].seq
             true_positions = list(range(first_exon_start-10000, int(first_exon_start)+1))
         return (upstream_seq, true_positions)
 
@@ -104,8 +109,12 @@ class GenomeFeature:
             true_pos (int): nucrec position
         '''
         # combine spliced sequence and downstream region position arrays, lookup pos from combined seq
+        
         combined_sequence_pos = self.spliced_seq_true_pos + self.downstream_region_true_pos
-        return combined_sequence_pos[spliced_sequence_pos]
+        if self.strand == '+1':
+            return combined_sequence_pos[spliced_sequence_pos]
+        else:
+            return len(self.nucrec) - combined_sequence_pos[spliced_sequence_pos]
    
     def get_true_pos_upstream(self, spliced_sequence_pos):
         '''
@@ -117,16 +126,20 @@ class GenomeFeature:
         '''
         # combine spliced sequence and downstream region position arrays, lookup pos from combined seq
         combined_sequence_pos = self.upstream_region_true_pos + self.spliced_seq_true_pos
-        return combined_sequence_pos[spliced_sequence_pos]
+        if self.strand == '+1':
+            return combined_sequence_pos[spliced_sequence_pos]
+        else:
+            return len(self.nucrec) - combined_sequence_pos[spliced_sequence_pos]
 
 
 class Frameshift:
     '''
     Holds information for a detected frameshift
     '''
-    def __init__(self, genome_feature, signal_found, fs_case, heptamer_location, start_pos, stop_pos):
+    def __init__(self, genome_feature, signal_found, signal_score, fs_case, heptamer_location, start_pos, stop_pos):
         self.genome_feature = genome_feature
         self.signal_found = signal_found
+        self.signal_score = signal_score
         self.case = fs_case
         self.heptamer_location = heptamer_location
         self.start_pos = start_pos 
@@ -160,7 +173,7 @@ class Frameshift:
             extended_seq = str(feature.upstream_region_seq) + str(feature.spliced_seq)
             cur_pos = self.start_pos
         # Traverse extended seq until hit a stop codon or the downstream limit
-        while extended_seq[cur_pos:cur_pos+3] not in params['stop_codons']: #and (cur_pos-self.start_pos < params['dstream_limit']):
+        while extended_seq[cur_pos:cur_pos+3] not in params['stop_codons'] and (cur_pos-self.start_pos < params['dstream_limit']):
             # At frameshift postion
             if cur_pos == self.heptamer_location:
                 frameshift_seq += str(extended_seq[cur_pos:cur_pos+3]) + ' '
@@ -175,6 +188,7 @@ class Frameshift:
                 frameshift_seq += str(extended_seq[cur_pos:cur_pos+3]) + ' '
                 #print(str(extended_seq[cur_pos:cur_pos+3]), end=' ')
                 frameshift_translation += str(Seq(extended_seq[cur_pos:cur_pos+3]).translate())
+                #print(extended_seq[cur_pos:cur_pos+3], end='')
                 cur_pos += 3
         
         # Append stop codon to frameshift sequence
@@ -231,15 +245,15 @@ def find_heptamer(sequence, signals, start_pos, stop_pos, case):
     '''
     if args.verbose:print('Searching from', start_pos, 'to', stop_pos)
     #print(sequence[start_pos:stop_pos])
-    current_pos = start_pos
     for signal in signals:
+        current_pos = start_pos
         while current_pos < stop_pos-6:
             if str(sequence[current_pos:current_pos+7]) in signal[0]:
-                print('Found Heptamer', feature.accession, feature.locus_tag, feature.protein_id, feature.product)
+                print('Found Heptamer', feature.strand, feature.accession, feature.locus_tag, feature.protein_id, feature.product)
                 if case == 'Downstream':
-                    frameshift = Frameshift(feature, signal[0], case, current_pos, 0, stop_pos)
+                    frameshift = Frameshift(feature, signal[0], signal[1], case, current_pos, 0, stop_pos)
                 elif case == 'Upstream':
-                    frameshift = Frameshift(feature, signal[0], case, current_pos, start_pos, feature.location.end)
+                    frameshift = Frameshift(feature, signal[0], signal[1], case, current_pos, start_pos, feature.location.end)
                 detected_frameshifts.append(frameshift)
                 print_pos = start_pos
                 while print_pos <= stop_pos + 1:
@@ -291,12 +305,15 @@ def find_upstream_frameshift(feature, shift, ustream_limit, stop_codons, signals
 
     ustream_count = 0
     current_pos = destination_start_codon_pos
+    roi_left = -1
     while ustream_count < ustream_limit and current_pos >= 0:
         if extended_seq[current_pos:current_pos+3] in stop_codons:
             roi_left = current_pos
             break
         current_pos -= 3
         ustream_count += 3
+    if roi_left == -1:
+        return
     
     # Print source before -1 shift with spacing
     if args.verbose:
@@ -438,8 +455,9 @@ def write_to_txt(output_filename):
                 outfile.write('\nStrand: ' + str(fs.genome_feature.strand))
                 outfile.write('\nCase: ' + str(fs.case))
                 outfile.write('\nSignal Found: ' + fs.signal_found)
+                outfile.write('\nSignal Score: ' + str(fs.signal_score))
                 outfile.write('\nFrameshift Stop Codon: ' + fs.stop_codon)
-                outfile.write('\nOriginal Location: [' + str(fs.genome_feature.location))
+                outfile.write('\nOriginal Location: [' + str(fs.genome_feature.location_str))
                 outfile.write('\nOriginal Sequence:\n' + fs.get_original_seq())
                 outfile.write('\nOriginal Product Length: ' + str(len(fs.genome_feature.spliced_seq.translate())))
                 outfile.write('\nOriginal Product:\n' + str(fs.genome_feature.spliced_seq.translate()))
@@ -457,7 +475,7 @@ def write_to_csv(output_filename):
     '''
     Create and write frameshift information to csv file
     '''
-    fields = ['Accession', 'Description', 'Locus Tag', 'Protein ID', 'Product', 'Strand', 'Case', 'Signal', 'Stop Codon', 
+    fields = ['Accession', 'Description', 'Locus Tag', 'Protein ID', 'Product', 'Strand', 'Case', 'Signal', 'Signal Score','Stop Codon', 
     'Original Location', 'Frameshift Location', 'Original Product Length', 'Frameshift Product Length', 'Original Product', 
     'Frameshift Product', 'Original Sequence', 'Frameshift seq']
     with open(output_filename + '.csv', 'w', newline='') as csvfile:
@@ -474,8 +492,9 @@ def write_to_csv(output_filename):
                 output.append(str(fs.genome_feature.strand))
                 output.append(str(fs.case))
                 output.append(fs.signal_found)
+                output.append(str(fs.signal_score))
                 output.append(fs.stop_codon)
-                output.append(str(fs.genome_feature.location))
+                output.append(str(fs.genome_feature.location_str))
                 if fs.case == 'Downstream':
                     output.append([str(fs.genome_feature.get_true_pos_downstream(fs.start_pos)) + ':' + 
                     str(fs.genome_feature.get_true_pos_downstream(fs.seq_end))])
@@ -489,22 +508,6 @@ def write_to_csv(output_filename):
                 output.append(fs.get_original_seq())
                 output.append(str(fs.frameshift_seq))
                 csvwriter.writerow(output)
-                '''
-                if fs.case == 'Downstream':
-                    csvwriter.writerow([fs.genome_feature.accession, fs.genome_feature.description, fs.genome_feature.locus_tag,
-                    fs.genome_feature.protein_id, fs.genome_feature.product, str(fs.genome_feature.strand), str(fs.case), fs.signal_found,
-                    fs.stop_codon, str(fs.genome_feature.location), [str(fs.genome_feature.get_true_pos_downstream(fs.start_pos)) + ':' + 
-                    str(fs.genome_feature.get_true_pos_downstream(fs.seq_end))], str(len(fs.genome_feature.spliced_seq.translate())), 
-                    str(len(fs.frameshift_translation)), str(fs.genome_feature.spliced_seq.translate()),
-                    str(fs.frameshift_translation), fs.get_original_seq(), str(fs.frameshift_seq)])
-                elif fs.case == 'Upstream':
-                    csvwriter.writerow([fs.genome_feature.accession, fs.genome_feature.description, fs.genome_feature.locus_tag,
-                    fs.genome_feature.protein_id, fs.genome_feature.product, str(fs.genome_feature.strand), str(fs.case), fs.signal_found,
-                    fs.stop_codon, str(fs.genome_feature.location), [str(fs.genome_feature.get_true_pos_upstream(fs.start_pos)) + ':' + 
-                    str(fs.genome_feature.get_true_pos_upstream(fs.seq_end))], str(len(fs.genome_feature.spliced_seq.translate())), 
-                    str(len(fs.frameshift_translation)), str(fs.genome_feature.spliced_seq.translate()),
-                    str(fs.frameshift_translation), fs.get_original_seq(), str(fs.frameshift_seq)])
-                '''
                     
 if __name__ == "__main__":
     # Create argument parser
@@ -522,30 +525,38 @@ if __name__ == "__main__":
     global params
     with open(args.input[0]) as json_file:  
         params = json.load(json_file)
-    
     if args.download_GBK_files:
         download_gbk_files(params['entrez_email'], params['entrez_apikey'], params['genome_path'])
 
     # For each nucleotide record associated with assembly
     for chromid_id in params['assembly_chromids']:
         nfile = open(params['genome_path'] + '/' + chromid_id + '.gb', "r")
-        global nucrec
         nucrec = SeqIO.read(nfile, "genbank")
         nfile.close()
-
+        
+        nucrec_id = nucrec.id
+        nucrec_desc = nucrec.description
         print("Processing: " + nucrec.id)
         # For each feature in the genebank file, create a GenomeFeature object and store in global genome_features array
         for i in range(len(nucrec.features)):
             feat = nucrec.features[i]
             if (feat.type == 'CDS'):
                 if (feat.strand == 1):
-                    genome_features.append(GenomeFeature(nuc_acc=nucrec.id, nuc_desc=nucrec.description, feature=feat))
-    
+                    genome_features.append(GenomeFeature(nucrec=nucrec, nuc_acc=nucrec_id, nuc_desc=nucrec_desc, feature=feat, strand='+1'))
+        
+        # Same loop for the reverse strand
+        nucrec = nucrec.reverse_complement()
+        for i in range(len(nucrec.features)):
+            feat = nucrec.features[i]
+            if (feat.type == 'CDS'):
+                if (feat.strand == 1):
+                    genome_features.append(GenomeFeature(nucrec=nucrec, nuc_acc=nucrec_id, nuc_desc=nucrec_desc, feature=feat, strand='-1'))
+
     # For each GenomeFeature in genome_features, search for upstream and downstream frameshifts
     for feature in genome_features:
         find_downstream_frameshift(feature, params['frame'], params['ustream_limit'], params['stop_codons'], params['signals'])
         find_upstream_frameshift(feature, params['frame'], params['ustream_limit'], params['stop_codons'], params['signals'])
 
-    # Write out results
+    print('Writing results')
     write_to_txt(params['outfile_name'])
     write_to_csv(params['outfile_name'])
