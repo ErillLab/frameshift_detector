@@ -329,6 +329,8 @@ def find_upstream_frameshift(feature, shift, ustream_limit, stop_codons, signals
             print_pos += 3
         print()
 
+    # Shift to source frame to -1 from first upstream stop in destination
+    current_pos = current_pos - shift
     # Find first ATG upstream in source frame
     roi_left = -1
     while ustream_count < ustream_limit and current_pos >= 0:
@@ -339,9 +341,7 @@ def find_upstream_frameshift(feature, shift, ustream_limit, stop_codons, signals
         ustream_count += 3
     if roi_left == -1:
         return
-
-    # Shift to source frame to -1 from first upstream stop in destination
-    current_pos = current_pos - shift
+    
     # Print -1 shifted source frame
     if args.verbose:
         print('\nSource Frame After -1: ', end='')
@@ -468,10 +468,10 @@ def write_to_txt(output_filename):
                 outfile.write('\nSignal Found: ' + fs.signal_found)
                 outfile.write('\nSignal Score: ' + str(fs.signal_score))
                 outfile.write('\nFrameshift Stop Codon: ' + fs.stop_codon)
-                outfile.write('\nOriginal Location: [' + str(fs.genome_feature.location_str))
-                outfile.write('\nOriginal Sequence:\n' + fs.get_original_seq())
-                outfile.write('\nOriginal Product Length: ' + str(len(fs.genome_feature.spliced_seq.translate())))
-                outfile.write('\nOriginal Product:\n' + str(fs.genome_feature.spliced_seq.translate()))
+                outfile.write('\nAnnotated Gene Location: [' + str(fs.genome_feature.location_str))
+                outfile.write('\nAnnotated Gene Sequence:\n' + fs.get_original_seq())
+                outfile.write('\nAnnotated Gene Product Length: ' + str(len(fs.genome_feature.spliced_seq.translate())))
+                outfile.write('\nAnnotated Gene Product:\n' + str(fs.genome_feature.spliced_seq.translate()))
                 if fs.case == 'Downstream':
                     outfile.write('\nFrameshift Location: [' + str(fs.genome_feature.get_true_pos_downstream(fs.start_pos)) + 
                 ':' + str(fs.genome_feature.get_true_pos_downstream(fs.seq_end)) + ']')
@@ -487,8 +487,8 @@ def write_to_csv(output_filename):
     Create and write frameshift information to csv file
     '''
     fields = ['Accession', 'Description', 'Locus Tag', 'Protein ID', 'Product', 'Strand', 'Case', 'Signal', 'Signal Score','Stop Codon', 
-    'Original Location', 'Frameshift Location', 'Original Product Length', 'Frameshift Product Length', 'Original Product', 
-    'Frameshift Product', 'Original Sequence', 'Frameshift seq']
+    'Annotated Gene Location', 'Frameshift Location', 'Annotated Gene Product Length', 'Frameshift Product Length', 'Annotated Gene Product', 
+    'Frameshift Product', 'Annotated Gene Sequence', 'Frameshift seq']
     with open(output_filename + '.csv', 'w', newline='') as csvfile:
         csvwriter = csv.writer(csvfile)
         csvwriter.writerow(fields)
