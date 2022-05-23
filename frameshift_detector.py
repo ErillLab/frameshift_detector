@@ -285,7 +285,7 @@ def find_upstream_frameshift(feature, shift, ustream_limit, stop_codons, signals
     Parameters:
         feature - search for frameshift for this feature
     '''
-    if args.verbose: print('\n********** Searching for uptream frameshift **********')
+    if args.verbose: print('\n********** Searching for uptream frameshift in ', feature.protein_id, feature.locus_tag, '**********')
     
     extended_seq = str(feature.upstream_region_seq) + str(feature.spliced_seq) 
     destination_start_codon_pos = len(extended_seq) - len(feature.spliced_seq)
@@ -328,6 +328,17 @@ def find_upstream_frameshift(feature, shift, ustream_limit, stop_codons, signals
                 print(extended_seq[print_pos:print_pos+3], end=' ')
             print_pos += 3
         print()
+
+    # Find first ATG upstream in source frame
+    roi_left = -1
+    while ustream_count < ustream_limit and current_pos >= 0:
+        if extended_seq[current_pos:current_pos+3] == 'ATG':
+            roi_left = current_pos
+            break
+        current_pos -= 3
+        ustream_count += 3
+    if roi_left == -1:
+        return
 
     # Shift to source frame to -1 from first upstream stop in destination
     current_pos = current_pos - shift
@@ -382,7 +393,7 @@ def find_downstream_frameshift(feature, shift, ustream_limit, stop_codons, signa
         stop_codons ["",""]: array of strings of stop codons
         signals [("String", Int)]: array of tuples ("Heptamer", Score)
     '''
-    if args.verbose: print('\n********** Searching for downstream frameshift **********')
+    if args.verbose: print('\n********** Searching for downstream frameshift in ', feature.protein_id, feature.locus_tag, '**********')
     source_start_codon_pos = 0
     source_stop_codon_pos = len(feature.spliced_seq) - 3 # the stop codon in the source frame
 
@@ -554,6 +565,18 @@ if __name__ == "__main__":
 
     # For each GenomeFeature in genome_features, search for upstream and downstream frameshifts
     for feature in genome_features:
+        '''
+        if feature.protein_id == 'NP_001291944.1':
+            pos = []
+            print(feature.location)
+            for part in feature.location.parts:
+                print(part.start, part.end)
+                pos.append(part.start)
+                pos.append(part.end)
+            print('Heptamer',feature.nucrec[pos[1]-3:pos[2]+3].seq, pos[1], pos[2], feature.nucrec[pos[1]:pos[2]].seq)
+            print(feature.nucrec[feature.location.start:feature.location.end].seq)
+        '''
+        
         find_downstream_frameshift(feature, params['frame'], params['ustream_limit'], params['stop_codons'], params['signals'])
         find_upstream_frameshift(feature, params['frame'], params['ustream_limit'], params['stop_codons'], params['signals'])
 
