@@ -616,19 +616,19 @@ def generate_jsons(input_csv, path):
             if not assembly.annotation_metadata:
                 continue
             n_chr = len(assembly.chromosomes) if assembly.assembly_level == 'Chromosome' else None
-            '''
+            
             print('name:', assembly.org.title, '\n',
                 'tax id:', assembly.org.tax_id, '\n',
                 'assm_level:', assembly.assembly_level, '\n',
                 'num_chromosomes:', n_chr, '\n',
                 'accession:', assembly.assembly_accession,'\n'
                 'chromosomes:')
-            '''
-            chromosomes = []
-            for chromosome in assembly.chromosomes:
-                #print('chromosome ', chromosome.name, ': ', chromosome.accession_version)
-                chromosomes.append(chromosome.accession_version)
-            species_dict["assembly_chromids"] = chromosomes
+            if (assembly.assembly_level == 'Complete Genome'):
+                chromosomes = []
+                for chromosome in assembly.chromosomes:
+                    #print('chromosome ', chromosome.name, ': ', chromosome.accession_version)
+                    chromosomes.append(chromosome.accession_version)
+                species_dict["assembly_chromids"] = chromosomes
 
         folder_check = os.path.isdir(path)
         if folder_check == False:
@@ -643,7 +643,7 @@ def create_fasta_file(fasta_file_name):
     for file in os.listdir(params["results_dir"]):
         if(file[-3:] == 'csv'):
             print(file)
-            with open(file, newline='') as csvfile:
+            with open(params["results_dir"] + '/' + file, newline='') as csvfile:
                 reader = csv.DictReader(csvfile)
                 for row in reader:
                     fasta_row = '>' + file.replace('_', ' ')[:-4] + ' | ' + row['Locus Tag'] + ' | ' + row['Protein ID'] + ' | ' + row['Product'] + '\n' + row['Frameshift Product'] + '\n'
