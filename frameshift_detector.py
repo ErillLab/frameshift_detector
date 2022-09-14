@@ -6,9 +6,11 @@ Example usage: python3 frameshift_detector.py input.json --verbose
 '''
 
 from calendar import c
+from ctypes import alignment
 from termcolor import colored
 from Bio import Entrez, SeqIO
 from Bio.Seq import Seq
+from Bio.Blast import NCBIXML
 from lib2to3.pgen2.tokenize import generate_tokens
 from posixpath import split
 import ncbi.datasets
@@ -651,9 +653,39 @@ def create_fasta_file(fasta_file_name):
     fasta_file.close()
 
 def makeblastdb(fasta_file_name):
-    output_file = 'test_blast.fasta'
-    cmd = 'makeblastdb -in {input_file} -out {output_file} -dbtype prot'
-    os.system(cmd.format(input_file=fasta_file_name, output_file=output_file))
+    blast_db = './db/blast_db'
+    cmd = 'makeblastdb -in {input} -out {out} -dbtype prot'
+    os.system(cmd.format(input=fasta_file_name, out=blast_db))
+
+def blast_search():
+    print('Beginning blast search')
+    cmd = 'blastp -query {query} -db {db} -evalue {e} -out {out} -outfmt 5'
+    
+    query = 'frameshifts.fasta'
+    blast_db = './db/blast_db'
+    output_file = 'blast_output.xml'
+    e_val = 10E-10
+
+    os.system(cmd.format(query=query, db=blast_db, e=e_val ,out=output_file))
+
+def parse_blast_output():
+    output_file = 'blast_output.xml'
+    with open(output_file) as blast_output:
+        blast_records = list(NCBIXML.parse(blast_output))
+        for blast_record in blast_records:
+            print('\n*************************************************')     
+            print(blast_record.query)
+            print("Alignments:")       
+            for alignment in blast_record.alignments:
+                for hsp in alignment.hsps:
+                    if hsp.expect < 10E-10:
+                        print("sequence:", alignment.title)
+                        #print("length:", alignment.length)
+                        #print("e value:", hsp.expect)
+                        #print(hsp.query[0:75] + "...")
+                        #print(hsp.match[0:75] + "...")
+                        #print(hsp.sbjct[0:75] + "...")
+            print('*************************************************\n')
 
 if __name__ == "__main__":
     # Create argument parser
@@ -722,3 +754,5 @@ if __name__ == "__main__":
     
     create_fasta_file('frameshifts.fasta') 
     makeblastdb('frameshifts.fasta')
+    blast_search()
+    parse_blast_output()
