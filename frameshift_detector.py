@@ -538,8 +538,8 @@ def write_to_csv(output_filename):
     '''
     fields = ['Accession', 'Description', 'Locus Tag', 'Protein ID', 'Known', 'Product', 'Strand', 'Case', 'Signal', 'Signal Score', 'Frameshift Stop Codon', 
     'Annotated Gene Location', 'Frameshift Location', 'Annotated Gene Product Length', 'Frameshift Product Length', 'Annotated Gene Product', 
-    'Frameshift Product', 'Spliced Annotated Gene Sequence', 'Spliced Frameshift Sequence']
-    with open(output_filename + '.csv', 'w', newline='') as csvfile:
+    'Frameshift Product', 'Spliced Annotated Gene Sequence', 'Spliced Frameshift Sequence', 'Orthology Group']
+    with open(output_filename + '.csv', 'a', newline='') as csvfile:
         csvwriter = csv.writer(csvfile)
         csvwriter.writerow(fields)
         for fs in detected_frameshifts:
@@ -573,6 +573,7 @@ def write_to_csv(output_filename):
                 output.append(str(fs.frameshift_translation))
                 output.append(fs.get_original_seq())
                 output.append(str(fs.frameshift_seq))
+                output.append("None")
                 
                 csvwriter.writerow(output)
 
@@ -625,6 +626,7 @@ def generate_jsons(input_csv, path):
                 'num_chromosomes:', n_chr, '\n',
                 'accession:', assembly.assembly_accession,'\n'
                 'chromosomes:')
+            # TO-DO Apply reference genome filter
             if (assembly.assembly_level == 'Complete Genome'):
                 chromosomes = []
                 for chromosome in assembly.chromosomes:
@@ -639,18 +641,34 @@ def generate_jsons(input_csv, path):
         with open(path + '/' + species_dict["outfile_name"] + '_input.json', 'w', encoding='utf-8') as f:
             json.dump(species_dict, f, ensure_ascii=False, indent=1)
 
-def create_fasta_file(fasta_file_name):
+def create_fasta_file_for_blast_db(fasta_file_name):
     print('creating fasta file')
     fasta_file = open(fasta_file_name, 'w+')
     for file in os.listdir(params["results_dir"]):
         if(file[-3:] == 'csv'):
             print(file)
             with open(params["results_dir"] + '/' + file, newline='') as csvfile:
-                reader = csv.DictReader(csvfile)
-                for row in reader:
+                frameshift_csv = csv.DictReader(csvfile)
+                #print(frameshift_csv.fieldnames)
+                #frameshift_csv.fieldnames.append('Orthology Group')
+                for row in frameshift_csv:
                     fasta_row = '>' + file.replace('_', ' ')[:-4] + ' | ' + row['Locus Tag'] + ' | ' + row['Protein ID'] + ' | ' + row['Product'] + '\n' + row['Frameshift Product'] + '\n'
                     fasta_file.write(fasta_row)
     fasta_file.close()
+
+def create_blast_query_file(csv_row, species):
+    fasta_file_name = 'query_files/' + csv_row['Protein ID'] + '.fasta'
+    fasta_file = open( fasta_file_name, 'w+')
+    fasta_row = '>' + species + ' | ' + csv_row['Locus Tag'] + ' | ' + csv_row['Protein ID'] + ' | ' + csv_row['Product'] + '\n' + csv_row['Frameshift Product'] + '\n'
+    fasta_file.write(fasta_row)
+    fasta_file.close()
+    return fasta_file_name
+
+def append_ortho_group(protein_id, group_num):
+    global frameshift_list
+    for row in frameshift_list:
+        if row['Protein ID'] == protein_id:
+            row['Orthology Group'] = group_num
 
 def makeblastdb(fasta_file_name):
     blast_db = './db/blast_db'
@@ -660,16 +678,44 @@ def makeblastdb(fasta_file_name):
 def blast_search():
     print('Beginning blast search')
     cmd = 'blastp -query {query} -db {db} -evalue {e} -out {out} -outfmt 5'
-    
-    query = 'frameshifts.fasta'
     blast_db = './db/blast_db'
-    output_file = 'blast_output.xml'
+    
+    folder_check = os.path.isdir('query_files')
+    if folder_check == False:
+        os.makedirs('query_files')
+
+    folder_check = os.path.isdir('blast_output')
+    if folder_check == False:
+        os.makedirs('blast_output')
+    
     e_val = 10E-10
 
-    os.system(cmd.format(query=query, db=blast_db, e=e_val ,out=output_file))
+    ortho_group = 1
+    for file in os.listdir(params["results_dir"]):
+        if(file == 'frameshifts.csv'):
+            print(file)
+            with open(params["results_dir"] + '/' + file, newline='') as fs_csv_file:
+                frameshift_csv = csv.DictReader(fs_csv_file)
+                global frameshift_list
+                frameshift_list = list(frameshift_csv)
+                for row in frameshift_list:
+                    if row['Orthology Group'] == "None":
+                        append_ortho_group(row['Protein ID'], ortho_group)
+                        output_file = 'blast_output/' + row['Protein ID'] + '.xml'
+                        query_fasta = create_blast_query_file(row, file.replace('_', ' ')[:-4])
+                        os.system(cmd.format(query=query_fasta, db=blast_db, e=e_val ,out=output_file))
+                        parse_blast_output(output_file, ortho_group)
+                        ortho_group += 1
+                
+                # Write results
+                print('Updating csv')
+                with open(params["results_dir"] + '/fs_conservation.csv', 'w', newline='') as conservation_csv_file:
+                    writer = csv.DictWriter(conservation_csv_file, fieldnames=frameshift_csv.fieldnames)
+                    for row in frameshift_list:
+                        writer.writerow(row)
+                        
 
-def parse_blast_output():
-    output_file = 'blast_output.xml'
+def parse_blast_output(output_file, ortho_group):
     with open(output_file) as blast_output:
         blast_records = list(NCBIXML.parse(blast_output))
         for blast_record in blast_records:
@@ -679,7 +725,9 @@ def parse_blast_output():
             for alignment in blast_record.alignments:
                 for hsp in alignment.hsps:
                     if hsp.expect < 10E-10:
-                        print("sequence:", alignment.title)
+                        protein_id = alignment.title.split(' | ')[2]
+                        print(protein_id, alignment.title.split(' | ')[3])
+                        append_ortho_group(protein_id, ortho_group)
                         #print("length:", alignment.length)
                         #print("e value:", hsp.expect)
                         #print(hsp.query[0:75] + "...")
@@ -750,9 +798,8 @@ if __name__ == "__main__":
                 os.makedirs(params["results_dir"] )
 
             write_to_txt(params["results_dir"] + '/' + species_params['outfile_name'])
-            write_to_csv(params["results_dir"] + '/' + species_params['outfile_name'])
+            write_to_csv(params["results_dir"] + '/frameshifts.csv')
     
-    create_fasta_file('frameshifts.fasta') 
+    create_fasta_file_for_blast_db('frameshifts.fasta') 
     makeblastdb('frameshifts.fasta')
     blast_search()
-    parse_blast_output()
