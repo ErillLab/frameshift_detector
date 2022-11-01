@@ -1,7 +1,8 @@
 '''
 Author: Sara Tahir
 Date: 04/15/2022
-Purpose: To identify new +1 programmed ribosomal frameshifts through the detection of specific heptameric sequences
+Purpose: To identify +1 programmed ribosomal frameshifts through the detection of specific 
+heptameric sequences, and show frameshift conservation
 Example usage: python3 frameshift_detector.py input.json --verbose 
 '''
 
@@ -20,6 +21,7 @@ import json
 import csv
 import time
 import os
+import zipfile
 
 detected_frameshifts = [] # Holds all Frameshift objects created after successful heptamer detection
 genome_features = [] # Holds all GenomeFeature objects created from features read in from genbank files
@@ -49,7 +51,12 @@ class GenomeFeature:
                      self.location_str += 'join'
             for part in feature.location.parts:
                 self.location_str += '[' + str(len(self.nucrec) - part.start) + ',' + str(len(self.nucrec) - part.end) + '](+)'
-        self.locus_tag = feature.qualifiers['locus_tag'][0]
+        try:
+            feature.qualifiers['locus_tag'][0]
+            self.locus_tag = feature.qualifiers['locus_tag'][0]
+        except:
+            self.locus_tag = ''
+
         try:
             feature.qualifiers['protein_id'][0]
             self.protein_id = feature.qualifiers['protein_id'][0]
@@ -234,19 +241,40 @@ class Frameshift:
 
         if str(extended_seq[cur_pos:cur_pos+3]) in params['stop_codons']:
             self.stop_codon = str(extended_seq[cur_pos:cur_pos+3])
-            print(str(extended_seq[cur_pos:cur_pos+3]), end=' ')
+            #print(str(extended_seq[cur_pos:cur_pos+3]), end=' ')
             self.seq_end = cur_pos + 3
         #print()
         self.frameshift_seq = frameshift_seq
         self.frameshift_translation = frameshift_translation
 
-def download_gbk_files(entrez_email, entrez_api_key, genome_path, chromids):
+def download_gbk_files(data_path, assembly_accessions):
     '''
     Downloads genbank files to genome_path output dir using accession numbers from input json file
     Parameters:
         entrez_email (string): entrez email
         entrez_api_key (string) - entrez api key
         genome_path (string) - output directory to save genbank files to
+    '''
+    chromosomes = ['']
+    exclude_sequence = False
+    include_annotation_type = ['GENOME_GB']
+
+    api_response = api_instance.download_assembly_package(
+        assembly_accessions,
+        chromosomes=chromosomes,
+        exclude_sequence=exclude_sequence,
+        include_annotation_type=include_annotation_type,
+        # Because we are streaming back the results to disk, 
+        # we should defer reading/decoding the response
+        _preload_content=False
+    )
+
+    with open('genome_data.zip', 'wb') as f:
+        f.write(api_response.data)
+
+    with zipfile.ZipFile('genome_data.zip', 'r') as zip_ref:
+        zip_ref.extractall(data_path)
+
     '''
     Entrez.email=entrez_email
     Entrez.api_key=entrez_api_key
@@ -259,22 +287,24 @@ def download_gbk_files(entrez_email, entrez_api_key, genome_path, chromids):
     #for each chromid in assembly, download GBK, and save using accession number
     print("Downloading GBK files and saving using accession number")
     for chromid_id in chromids:
-        if args.verbose: print("Processing download of: " + chromid_id)
-        #check whether the chromid is already in
-        if not((chromid_id + '.gb') in dir_contents):
-            if args.verbose: print("--> Downloading: " + chromid_id)
-            #retrieve genome record
-            net_handle = Entrez.efetch(db="nuccore",id=chromid_id,
-                                        rettype='gbwithparts', retmode="txt")
-            chromid_record=net_handle.read()
-            time.sleep(1.5)
-            #write the record to file
-            out_handle = open(genome_path + '/' + chromid_id + ".gb", "w")
-            out_handle.write(chromid_record)
-            time.sleep(1.5)
-            out_handle.close()
-            net_handle.close()
-
+        print(chromid_id)
+        if chromid_id is not None:
+            if args.verbose: print("Processing download of: " + chromid_id)
+            #check whether the chromid is already in
+            if not((chromid_id + '.gb') in dir_contents):
+                if args.verbose: print("--> Downloading: " + chromid_id)
+                #retrieve genome record
+                net_handle = Entrez.efetch(db="nuccore",id=chromid_id,
+                                            rettype='gbwithparts', retmode="txt")
+                chromid_record=net_handle.read()
+                time.sleep(1.5)
+                #write the record to file
+                out_handle = open(genome_path + '/' + chromid_id + ".gb", "w")
+                out_handle.write(chromid_record)
+                time.sleep(1.5)
+                out_handle.close()
+                net_handle.close()
+    '''
 def find_heptamer(sequence, signals, start_pos, stop_pos, case):
     '''
     Search for heptamer in geneome feature within the given range
@@ -507,7 +537,8 @@ def write_to_txt(output_filename):
     with open(output_filename+'.txt','w') as outfile:
         for fs in detected_frameshifts:
             if fs.stop_codon != 'None':
-                outfile.write('\n\nAccession: ' + fs.genome_feature.accession)
+                outfile.write('\n\nSpecies: ' + output_filename)
+                outfile.write('\nAccession: ' + fs.genome_feature.accession)
                 outfile.write('\nDescription: ' + fs.genome_feature.description)
                 outfile.write('\nLocus Tag: ' + fs.genome_feature.locus_tag)
                 outfile.write('\nProtein ID: ' + fs.genome_feature.protein_id)
@@ -532,11 +563,11 @@ def write_to_txt(output_filename):
                 outfile.write('\nFrameshift Product Length: ' + str(len(fs.frameshift_translation)))
                 outfile.write('\nFrameshift Product:\n' + str(fs.frameshift_translation))
 
-def write_to_csv(output_filename):
+def write_to_csv(output_filename, species):
     '''
     Create and write frameshift information to csv file
     '''
-    fields = ['Accession', 'Description', 'Locus Tag', 'Protein ID', 'Known', 'Product', 'Strand', 'Case', 'Signal', 'Signal Score', 'Frameshift Stop Codon', 
+    fields = ['Species','Accession', 'Description', 'Locus Tag', 'Protein ID', 'Known', 'Product', 'Strand', 'Case', 'Signal', 'Signal Score', 'Frameshift Stop Codon', 
     'Annotated Gene Location', 'Frameshift Location', 'Annotated Gene Product Length', 'Frameshift Product Length', 'Annotated Gene Product', 
     'Frameshift Product', 'Spliced Annotated Gene Sequence', 'Spliced Frameshift Sequence', 'Orthology Group']
     with open(output_filename + '.csv', 'a', newline='') as csvfile:
@@ -545,6 +576,7 @@ def write_to_csv(output_filename):
         for fs in detected_frameshifts:
             if fs.stop_codon != 'None':
                 output = []
+                output.append(species)
                 output.append(fs.genome_feature.accession)
                 output.append(fs.genome_feature.description)
                 output.append(fs.genome_feature.locus_tag)
@@ -560,13 +592,13 @@ def write_to_csv(output_filename):
                 if fs.case == 'Downstream':
                     output.append([str(fs.genome_feature.get_true_pos_downstream(fs.start_pos)).replace('\'','') + ':' + 
                     str(fs.genome_feature.get_true_pos_downstream(fs.seq_end)).replace('\'','')])
-                    print(fs.genome_feature.get_true_pos_downstream(fs.start_pos), fs.genome_feature.get_true_pos_downstream(fs.seq_end))
-                    print(fs.genome_feature.nucrec[fs.genome_feature.get_true_pos_downstream(fs.start_pos):fs.genome_feature.get_true_pos_downstream(fs.seq_end)].seq)
+                    #print(fs.genome_feature.get_true_pos_downstream(fs.start_pos), fs.genome_feature.get_true_pos_downstream(fs.seq_end))
+                    #print(fs.genome_feature.nucrec[fs.genome_feature.get_true_pos_downstream(fs.start_pos):fs.genome_feature.get_true_pos_downstream(fs.seq_end)].seq)
                 elif fs.case == 'Upstream':
                     output.append([str(fs.genome_feature.get_true_pos_upstream(fs.start_pos)+1).replace('\'','') + ':' + 
                     str(fs.genome_feature.get_true_pos_upstream(fs.seq_end)+1).replace('\'','')])
-                    print(fs.genome_feature.get_true_pos_upstream(fs.start_pos), fs.genome_feature.get_true_pos_upstream(fs.seq_end)+1)
-                    print(fs.genome_feature.nucrec[fs.genome_feature.get_true_pos_upstream(fs.start_pos):fs.genome_feature.get_true_pos_upstream(fs.seq_end)+1].seq)
+                    #print(fs.genome_feature.get_true_pos_upstream(fs.start_pos), fs.genome_feature.get_true_pos_upstream(fs.seq_end)+1)
+                    #print(fs.genome_feature.nucrec[fs.genome_feature.get_true_pos_upstream(fs.start_pos):fs.genome_feature.get_true_pos_upstream(fs.seq_end)+1].seq)
                 output.append(str(len(fs.genome_feature.splice().translate())))
                 output.append(str(len(fs.frameshift_translation)))
                 output.append(str(fs.genome_feature.splice().translate()))
@@ -578,7 +610,7 @@ def write_to_csv(output_filename):
                 csvwriter.writerow(output)
 
 def species_to_taxid(species):
-    return ncbi.get_name_translator([species])['Saccharomyces cerevisiae S288C'][0]
+    return ncbi.get_name_translator([species])[species][0]
 
 def read_input_file(input_csv):
     species_heptamers_dict = {}
@@ -607,39 +639,37 @@ def generate_jsons(input_csv, path):
         species_dict["species_name"] = species
         species_dict["outfile_name"] = species.replace(' ', '_')
         species_dict["signals"] = species_heptamers_dict[species]
-        print(species, '\n', species_dict["signals"])
         taxid = species_to_taxid(species)
         genome_summary = api_instance.assembly_descriptors_by_taxon(
             taxon=str(taxid),
             page_size=100,
             filters_assembly_source='refseq')
-
-        print(f"Number of assemblies: {genome_summary.total_count}")
-        for assembly in map(lambda d: d.assembly, genome_summary.assemblies):
-            if not assembly.annotation_metadata:
-                continue
-            n_chr = len(assembly.chromosomes) if assembly.assembly_level == 'Chromosome' else None
-            
-            print('name:', assembly.org.title, '\n',
-                'tax id:', assembly.org.tax_id, '\n',
-                'assm_level:', assembly.assembly_level, '\n',
-                'num_chromosomes:', n_chr, '\n',
-                'accession:', assembly.assembly_accession,'\n'
-                'chromosomes:')
-            # TO-DO Apply reference genome filter
-            if (assembly.assembly_level == 'Complete Genome'):
+        #print(genome_summary)
+        print('Species:', species)
+        #print(f"Number of assemblies: {genome_summary.total_count}")
+        
+        if genome_summary.total_count != None:
+            for assembly in map(lambda d: d.assembly, genome_summary.assemblies):
+                if not assembly.annotation_metadata:
+                    continue
+                # TO-DO Apply reference genome filter
+                #if (assembly.assembly_level == 'Complete Genome'):
+                n_chr = len(assembly.chromosomes) if assembly.assembly_level == 'Chromosome' else None
+                print('assembly: ',assembly.assembly_accession)
+                species_dict["assembly_accession"] = assembly.assembly_accession
+                species_dict["assembly_level"] = assembly.assembly_level
                 chromosomes = []
                 for chromosome in assembly.chromosomes:
-                    #print('chromosome ', chromosome.name, ': ', chromosome.accession_version)
+                    print('chromosome ', chromosome.name, ': ', chromosome.accession_version)
                     chromosomes.append(chromosome.accession_version)
                 species_dict["assembly_chromids"] = chromosomes
 
-        folder_check = os.path.isdir(path)
-        if folder_check == False:
-            os.makedirs(path)
-    
-        with open(path + '/' + species_dict["outfile_name"] + '_input.json', 'w', encoding='utf-8') as f:
-            json.dump(species_dict, f, ensure_ascii=False, indent=1)
+                folder_check = os.path.isdir(path)
+                if folder_check == False:
+                    os.makedirs(path)
+            
+                with open(path + '/' + species_dict["outfile_name"] + '_input.json', 'w', encoding='utf-8') as f:
+                    json.dump(species_dict, f, ensure_ascii=False, indent=1)
 
 def create_fasta_file_for_blast_db(fasta_file_name):
     print('creating fasta file')
@@ -755,51 +785,51 @@ if __name__ == "__main__":
 
     if not args.find_conservation:
         generate_jsons(params['csv_input_file'], params['fs_inputs_path'])
-
+        assembly_accessions = []
+        for input_file in os.listdir(params['fs_inputs_path']):
+             with open(params['fs_inputs_path'] + '/' +input_file) as json_file:  
+                species_params = json.load(json_file)
+                assembly_accessions.append(species_params['assembly_accession'])
+        download_gbk_files(params['genome_path'] + '/', assembly_accessions)
+        data_path = params['genome_path'] + '/ncbi_dataset/data/'
+        
         for input_file in os.listdir(params['fs_inputs_path']):
             print(input_file)
             with open(params['fs_inputs_path'] + '/' +input_file) as json_file:  
                 species_params = json.load(json_file)
-            download_gbk_files(params['entrez_email'], params['entrez_apikey'], params['genome_path'] + '/' + species_params['outfile_name'], species_params['assembly_chromids'])
-            #download_gbk_files(params['entrez_email'], params['entrez_apikey'], params['genome_path'], species_params['assembly_chromids'])
-            # For each nucleotide record associated with assembly
-            for chromid_id in species_params['assembly_chromids']:
-                nfile = open(params['genome_path'] + '/' + species_params['outfile_name'] +'/'+chromid_id + '.gb', "r")
-                #nfile = open(params['genome_path'] + '/' + chromid_id + '.gb', "r")
-                nucrec = SeqIO.read(nfile, "genbank")
-                nfile.close()
-                
-                nucrec_id = nucrec.id
-                nucrec_desc = nucrec.description
-                print("Processing: " + nucrec.id)
-                # For each feature in the genebank file, create a GenomeFeature object and store in global genome_features array
-                for i in range(len(nucrec.features)):
-                    feat = nucrec.features[i]
-                    if (feat.type == 'CDS'):
-                        if (feat.strand == 1):
-                            genome_features.append(GenomeFeature(nucrec=nucrec, nuc_acc=nucrec_id, nuc_desc=nucrec_desc, feature=feat, strand='+1'))
-                
-                # Same loop for the reverse strand
-                nucrec = nucrec.reverse_complement()
-                for i in range(len(nucrec.features)):
-                    feat = nucrec.features[i]
-                    if (feat.type == 'CDS'):
-                        if (feat.strand == 1):
-                            genome_features.append(GenomeFeature(nucrec=nucrec, nuc_acc=nucrec_id, nuc_desc=nucrec_desc, feature=feat, strand='-1'))
+                nucrecs = SeqIO.parse(data_path + species_params['assembly_accession'] + '/genomic.gbff', "genbank")
+                for nucrec in nucrecs:
+                    nucrec_id = nucrec.id
+                    nucrec_desc = nucrec.description
+                    print("Processing: " + nucrec.id)
+                    # For each feature in the genebank file, create a GenomeFeature object and store in global genome_features array
+                    for i in range(len(nucrec.features)):
+                        feat = nucrec.features[i]
+                        if (feat.type == 'CDS'):
+                            if (feat.strand == 1):
+                                genome_features.append(GenomeFeature(nucrec=nucrec, nuc_acc=nucrec_id, nuc_desc=nucrec_desc, feature=feat, strand='+1'))
+                    
+                    # Same loop for the reverse strand
+                    nucrec = nucrec.reverse_complement()
+                    for i in range(len(nucrec.features)):
+                        feat = nucrec.features[i]
+                        if (feat.type == 'CDS'):
+                            if (feat.strand == 1):
+                                genome_features.append(GenomeFeature(nucrec=nucrec, nuc_acc=nucrec_id, nuc_desc=nucrec_desc, feature=feat, strand='-1'))
 
-            # For each GenomeFeature in genome_features, search for upstream and downstream frameshifts
-            for feature in genome_features:
-                find_upstream_frameshift(feature, params['frame'], params['ustream_limit'], params['stop_codons'], species_params['signals'])
-                find_downstream_frameshift(feature, params['frame'], params['ustream_limit'], params['stop_codons'], species_params['signals'])
-            print('Writing results')
+                # For each GenomeFeature in genome_features, search for upstream and downstream frameshifts
+                for feature in genome_features:
+                    find_upstream_frameshift(feature, params['frame'], params['ustream_limit'], params['stop_codons'], species_params['signals'])
+                    find_downstream_frameshift(feature, params['frame'], params['ustream_limit'], params['stop_codons'], species_params['signals'])
+                print('Writing results to', species_params['outfile_name'])
 
-            folder_check = os.path.isdir(params["results_dir"] )
-            if folder_check == False:
-                os.makedirs(params["results_dir"] )
+                folder_check = os.path.isdir(params["results_dir"] )
+                if folder_check == False:
+                    os.makedirs(params["results_dir"] )
 
-            write_to_txt(params["results_dir"] + '/' + species_params['outfile_name'])
-            write_to_csv(params["results_dir"] + '/frameshifts.csv')
-    
-    create_fasta_file_for_blast_db('frameshifts.fasta') 
-    makeblastdb('frameshifts.fasta')
-    blast_search()
+                write_to_txt(params["results_dir"] + '/' + species_params['outfile_name'])
+                write_to_csv(params["results_dir"] + '/frameshifts', species_params['outfile_name'])
+            
+    #create_fasta_file_for_blast_db('frameshifts.fasta') 
+    #makeblastdb('frameshifts.fasta')
+    #blast_search()
