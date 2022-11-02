@@ -21,9 +21,10 @@ import json
 import csv
 import time
 import os
+import shutil
 import zipfile
 
-detected_frameshifts = [] # Holds all Frameshift objects created after successful heptamer detection
+detected_frameshifts = {} # Holds all Frameshift objects created after successful heptamer detection
 genome_features = [] # Holds all GenomeFeature objects created from features read in from genbank files
 
 # start an api_instance 
@@ -35,8 +36,9 @@ class GenomeFeature:
     '''
     Contains information about a specific feature pulled from a Genbank file.
     '''
-    def __init__(self, nucrec, nuc_acc, nuc_desc, feature, strand):
+    def __init__(self, nucrec, nuc_acc, nuc_desc, feature, strand, species):
         # Basic feature metadata
+        self.species = species
         self.nucrec = nucrec
         self.accession = nuc_acc
         self.description = nuc_desc
@@ -327,7 +329,7 @@ def find_heptamer(sequence, signals, start_pos, stop_pos, case):
                     frameshift = Frameshift(feature, signal[0], signal[1], case, current_pos, 0, stop_pos)
                 elif case == 'Upstream':
                     frameshift = Frameshift(feature, signal[0], signal[1], case, current_pos, start_pos, feature.location.end)
-                detected_frameshifts.append(frameshift)
+                detected_frameshifts[feature.species].append(frameshift)
                 print_pos = start_pos
                 while print_pos <= stop_pos + 1:
                     if print_pos == current_pos:
@@ -530,14 +532,14 @@ def find_downstream_frameshift(feature, shift, ustream_limit, stop_codons, signa
         else:
             find_heptamer(feature.spliced_seq, signals, destination_stop_codon_pos[roi]-1, destination_stop_codon_pos[roi+1]-1, 'Downstream')
 
-def write_to_txt(output_filename):
+def write_to_txt(output_filename, species):
     '''
     Create and write frameshift information to txt file
     '''
     with open(output_filename+'.txt','w') as outfile:
-        for fs in detected_frameshifts:
+        for fs in detected_frameshifts[species]:
             if fs.stop_codon != 'None':
-                outfile.write('\n\nSpecies: ' + output_filename)
+                outfile.write('\n\nSpecies: ' + fs.genome_feature.species)
                 outfile.write('\nAccession: ' + fs.genome_feature.accession)
                 outfile.write('\nDescription: ' + fs.genome_feature.description)
                 outfile.write('\nLocus Tag: ' + fs.genome_feature.locus_tag)
@@ -567,16 +569,12 @@ def write_to_csv(output_filename, species):
     '''
     Create and write frameshift information to csv file
     '''
-    fields = ['Species','Accession', 'Description', 'Locus Tag', 'Protein ID', 'Known', 'Product', 'Strand', 'Case', 'Signal', 'Signal Score', 'Frameshift Stop Codon', 
-    'Annotated Gene Location', 'Frameshift Location', 'Annotated Gene Product Length', 'Frameshift Product Length', 'Annotated Gene Product', 
-    'Frameshift Product', 'Spliced Annotated Gene Sequence', 'Spliced Frameshift Sequence', 'Orthology Group']
     with open(output_filename + '.csv', 'a', newline='') as csvfile:
         csvwriter = csv.writer(csvfile)
-        csvwriter.writerow(fields)
-        for fs in detected_frameshifts:
+        for fs in detected_frameshifts[species]:
             if fs.stop_codon != 'None':
                 output = []
-                output.append(species)
+                output.append(fs.genome_feature.species)
                 output.append(fs.genome_feature.accession)
                 output.append(fs.genome_feature.description)
                 output.append(fs.genome_feature.locus_tag)
@@ -633,6 +631,11 @@ def read_input_file(input_csv):
     return species_heptamers_dict
 
 def generate_jsons(input_csv, path):
+    folder_check = os.path.isdir(path)
+    if folder_check == True:
+        shutil.rmtree(path)
+    os.makedirs(path)
+
     species_heptamers_dict = read_input_file(input_csv)
     for species in species_heptamers_dict.keys():
         species_dict = {}
@@ -663,15 +666,13 @@ def generate_jsons(input_csv, path):
                     print('chromosome ', chromosome.name, ': ', chromosome.accession_version)
                     chromosomes.append(chromosome.accession_version)
                 species_dict["assembly_chromids"] = chromosomes
-
-                folder_check = os.path.isdir(path)
-                if folder_check == False:
-                    os.makedirs(path)
             
                 with open(path + '/' + species_dict["outfile_name"] + '_input.json', 'w', encoding='utf-8') as f:
                     json.dump(species_dict, f, ensure_ascii=False, indent=1)
 
 def create_fasta_file_for_blast_db(fasta_file_name):
+    if (os.path.exists(fasta_file_name)):
+        os.remove(fasta_file_name)
     print('creating fasta file')
     fasta_file = open(fasta_file_name, 'w+')
     for file in os.listdir(params["results_dir"]):
@@ -784,6 +785,18 @@ if __name__ == "__main__":
         params = json.load(json_file)
 
     if not args.find_conservation:
+        folder_check = os.path.isdir(params["results_dir"] )
+        if folder_check == True:
+            shutil.rmtree(params["results_dir"])
+        os.makedirs(params["results_dir"])
+
+        fields = ['Species','Accession', 'Description', 'Locus Tag', 'Protein ID', 'Known', 'Product', 'Strand', 'Case', 'Signal', 'Signal Score', 'Frameshift Stop Codon', 
+    'Annotated Gene Location', 'Frameshift Location', 'Annotated Gene Product Length', 'Frameshift Product Length', 'Annotated Gene Product', 
+    'Frameshift Product', 'Spliced Annotated Gene Sequence', 'Spliced Frameshift Sequence', 'Orthology Group']
+        with open(params["results_dir"] + '/frameshifts.csv', 'a', newline='') as csvfile:
+            csvwriter = csv.writer(csvfile)
+            csvwriter.writerow(fields)
+
         generate_jsons(params['csv_input_file'], params['fs_inputs_path'])
         assembly_accessions = []
         for input_file in os.listdir(params['fs_inputs_path']):
@@ -797,6 +810,7 @@ if __name__ == "__main__":
             print(input_file)
             with open(params['fs_inputs_path'] + '/' +input_file) as json_file:  
                 species_params = json.load(json_file)
+                detected_frameshifts[species_params['species_name']] = []
                 nucrecs = SeqIO.parse(data_path + species_params['assembly_accession'] + '/genomic.gbff', "genbank")
                 for nucrec in nucrecs:
                     nucrec_id = nucrec.id
@@ -807,7 +821,7 @@ if __name__ == "__main__":
                         feat = nucrec.features[i]
                         if (feat.type == 'CDS'):
                             if (feat.strand == 1):
-                                genome_features.append(GenomeFeature(nucrec=nucrec, nuc_acc=nucrec_id, nuc_desc=nucrec_desc, feature=feat, strand='+1'))
+                                genome_features.append(GenomeFeature(nucrec=nucrec, nuc_acc=nucrec_id, nuc_desc=nucrec_desc, feature=feat, strand='+1', species=species_params['species_name']))
                     
                     # Same loop for the reverse strand
                     nucrec = nucrec.reverse_complement()
@@ -815,21 +829,17 @@ if __name__ == "__main__":
                         feat = nucrec.features[i]
                         if (feat.type == 'CDS'):
                             if (feat.strand == 1):
-                                genome_features.append(GenomeFeature(nucrec=nucrec, nuc_acc=nucrec_id, nuc_desc=nucrec_desc, feature=feat, strand='-1'))
+                                genome_features.append(GenomeFeature(nucrec=nucrec, nuc_acc=nucrec_id, nuc_desc=nucrec_desc, feature=feat, strand='-1', species=species_params['species_name']))
 
                 # For each GenomeFeature in genome_features, search for upstream and downstream frameshifts
                 for feature in genome_features:
                     find_upstream_frameshift(feature, params['frame'], params['ustream_limit'], params['stop_codons'], species_params['signals'])
                     find_downstream_frameshift(feature, params['frame'], params['ustream_limit'], params['stop_codons'], species_params['signals'])
-                print('Writing results to', species_params['outfile_name'])
+                print('Writing results to', species_params['species_name'])
 
-                folder_check = os.path.isdir(params["results_dir"] )
-                if folder_check == False:
-                    os.makedirs(params["results_dir"] )
-
-                write_to_txt(params["results_dir"] + '/' + species_params['outfile_name'])
-                write_to_csv(params["results_dir"] + '/frameshifts', species_params['outfile_name'])
+                write_to_txt(params["results_dir"] + '/' + species_params['outfile_name'], species_params['species_name'])
+                write_to_csv(params["results_dir"] + '/frameshifts', species_params['species_name'])
             
-    #create_fasta_file_for_blast_db('frameshifts.fasta') 
-    #makeblastdb('frameshifts.fasta')
-    #blast_search()
+    create_fasta_file_for_blast_db('frameshifts.fasta') 
+    makeblastdb('frameshifts.fasta')
+    blast_search()
