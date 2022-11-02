@@ -673,17 +673,17 @@ def generate_jsons(input_csv, path):
 def create_fasta_file_for_blast_db(fasta_file_name):
     if (os.path.exists(fasta_file_name)):
         os.remove(fasta_file_name)
-    print('creating fasta file')
+
+    print('Creating fasta file for blast db')
     fasta_file = open(fasta_file_name, 'w+')
+
+    # Open frameshift csv file(s) and add to fasta file for blast db
     for file in os.listdir(params["results_dir"]):
         if(file[-3:] == 'csv'):
-            print(file)
             with open(params["results_dir"] + '/' + file, newline='') as csvfile:
                 frameshift_csv = csv.DictReader(csvfile)
-                #print(frameshift_csv.fieldnames)
-                #frameshift_csv.fieldnames.append('Orthology Group')
                 for row in frameshift_csv:
-                    fasta_row = '>' + file.replace('_', ' ')[:-4] + ' | ' + row['Locus Tag'] + ' | ' + row['Protein ID'] + ' | ' + row['Product'] + '\n' + row['Frameshift Product'] + '\n'
+                    fasta_row = '>' + row['Species'] + ' | ' + row['Locus Tag'] + ' | ' + row['Protein ID'] + ' | ' + row['Product'] + '\n' + row['Frameshift Product'] + '\n'
                     fasta_file.write(fasta_row)
     fasta_file.close()
 
@@ -695,16 +695,16 @@ def create_blast_query_file(csv_row, species):
     fasta_file.close()
     return fasta_file_name
 
+def makeblastdb(fasta_file_name):
+    blast_db = './db/blast_db'
+    cmd = 'makeblastdb -in {input} -out {out} -dbtype prot'
+    os.system(cmd.format(input=fasta_file_name, out=blast_db))
+
 def append_ortho_group(protein_id, group_num):
     global frameshift_list
     for row in frameshift_list:
         if row['Protein ID'] == protein_id:
             row['Orthology Group'] = group_num
-
-def makeblastdb(fasta_file_name):
-    blast_db = './db/blast_db'
-    cmd = 'makeblastdb -in {input} -out {out} -dbtype prot'
-    os.system(cmd.format(input=fasta_file_name, out=blast_db))
 
 def blast_search():
     print('Beginning blast search')
@@ -712,18 +712,20 @@ def blast_search():
     blast_db = './db/blast_db'
     
     folder_check = os.path.isdir('query_files')
-    if folder_check == False:
-        os.makedirs('query_files')
+    if folder_check == True:
+        shutil.rmtree('query_files')
+    os.makedirs('query_files')
 
     folder_check = os.path.isdir('blast_output')
-    if folder_check == False:
-        os.makedirs('blast_output')
+    if folder_check == True:
+        shutil.rmtree('blast_output')
+    os.makedirs('blast_output')
     
     e_val = 10E-10
 
     ortho_group = 1
     for file in os.listdir(params["results_dir"]):
-        if(file == 'frameshifts.csv'):
+        if(file == 'frameshifts.csv'): # only open master frameshift file
             print(file)
             with open(params["results_dir"] + '/' + file, newline='') as fs_csv_file:
                 frameshift_csv = csv.DictReader(fs_csv_file)
@@ -739,7 +741,7 @@ def blast_search():
                         ortho_group += 1
                 
                 # Write results
-                print('Updating csv')
+                print('Updating fs conservation csv')
                 with open(params["results_dir"] + '/fs_conservation.csv', 'w', newline='') as conservation_csv_file:
                     writer = csv.DictWriter(conservation_csv_file, fieldnames=frameshift_csv.fieldnames)
                     for row in frameshift_list:
