@@ -496,9 +496,9 @@ def find_downstream_frameshift(feature, shift, ustream_limit, stop_codons, signa
         current_pos = source_stop_codon_pos + shift
 
     while ustream_count < ustream_limit and current_pos >= 0:
-        if feature.spliced_seq[current_pos:current_pos+3] in stop_codons:
+        if feature.spliced_seq[current_pos-1:current_pos+2] in stop_codons:
             roi_left = current_pos # found first +1 destination frame stop codon
-            destination_stop_codon_pos.append(current_pos)
+            destination_stop_codon_pos.append(current_pos-1)
         current_pos -= 3
         ustream_count += 3
     
@@ -777,37 +777,42 @@ if __name__ == "__main__":
     parser.add_argument('--verbose', action='store_true', help='print helpful things')
     # Optional --blast_only flag to skip frameshift detection and only find frameshift conservation
     parser.add_argument('--find_conservation', action='store_true', help='skip frameshift detection and only find frameshift conservation')
+    # Optional --protein_id flag to detect frameshift for only a specified protein
+    parser.add_argument('--protein_id', help='detect frameshift for only a specified protein')
+
     parser.set_defaults(verbose=False, find_conservation=False)
 
     args = parser.parse_args()
 
     print('Opening input File: ', args.input[0])
+    print(args.protein_id)
     global params
     with open(args.input[0]) as json_file:  
         params = json.load(json_file)
 
     if not args.find_conservation:
-        folder_check = os.path.isdir(params["results_dir"] )
-        if folder_check == True:
-            shutil.rmtree(params["results_dir"])
-        os.makedirs(params["results_dir"])
+        if args.protein_id == None:
+            folder_check = os.path.isdir(params["results_dir"] )
+            if folder_check == True:
+                shutil.rmtree(params["results_dir"])
+            os.makedirs(params["results_dir"])
 
-        fields = ['Species','Accession', 'Description', 'Locus Tag', 'Protein ID', 'Known', 'Product', 'Strand', 'Case', 'Signal', 'Signal Score', 'Frameshift Stop Codon', 
-    'Annotated Gene Location', 'Frameshift Location', 'Annotated Gene Product Length', 'Frameshift Product Length', 'Annotated Gene Product', 
-    'Frameshift Product', 'Spliced Annotated Gene Sequence', 'Spliced Frameshift Sequence', 'Orthology Group']
-        with open(params["results_dir"] + '/frameshifts.csv', 'a', newline='') as csvfile:
-            csvwriter = csv.writer(csvfile)
-            csvwriter.writerow(fields)
+            fields = ['Species','Accession', 'Description', 'Locus Tag', 'Protein ID', 'Known', 'Product', 'Strand', 'Case', 'Signal', 'Signal Score', 'Frameshift Stop Codon', 
+        'Annotated Gene Location', 'Frameshift Location', 'Annotated Gene Product Length', 'Frameshift Product Length', 'Annotated Gene Product', 
+        'Frameshift Product', 'Spliced Annotated Gene Sequence', 'Spliced Frameshift Sequence', 'Orthology Group']
+            with open(params["results_dir"] + '/frameshifts.csv', 'a', newline='') as csvfile:
+                csvwriter = csv.writer(csvfile)
+                csvwriter.writerow(fields)
 
-        generate_jsons(params['csv_input_file'], params['fs_inputs_path'])
-        assembly_accessions = []
-        for input_file in os.listdir(params['fs_inputs_path']):
-             with open(params['fs_inputs_path'] + '/' +input_file) as json_file:  
-                species_params = json.load(json_file)
-                assembly_accessions.append(species_params['assembly_accession'])
-        download_gbk_files(params['genome_path'] + '/', assembly_accessions)
-        data_path = params['genome_path'] + '/ncbi_dataset/data/'
+            generate_jsons(params['csv_input_file'], params['fs_inputs_path'])
+            assembly_accessions = []
+            for input_file in os.listdir(params['fs_inputs_path']):
+                with open(params['fs_inputs_path'] + '/' +input_file) as json_file:  
+                    species_params = json.load(json_file)
+                    assembly_accessions.append(species_params['assembly_accession'])
+            download_gbk_files(params['genome_path'] + '/', assembly_accessions)
         
+        data_path = params['genome_path'] + '/ncbi_dataset/data/'
         for input_file in os.listdir(params['fs_inputs_path']):
             print(input_file)
             with open(params['fs_inputs_path'] + '/' +input_file) as json_file:  
@@ -817,31 +822,49 @@ if __name__ == "__main__":
                 for nucrec in nucrecs:
                     nucrec_id = nucrec.id
                     nucrec_desc = nucrec.description
-                    print("Processing: " + nucrec.id)
+                    #print("Processing: " + nucrec.id)
                     # For each feature in the genebank file, create a GenomeFeature object and store in global genome_features array
                     for i in range(len(nucrec.features)):
                         feat = nucrec.features[i]
                         if (feat.type == 'CDS'):
                             if (feat.strand == 1):
-                                genome_features.append(GenomeFeature(nucrec=nucrec, nuc_acc=nucrec_id, nuc_desc=nucrec_desc, feature=feat, strand='+1', species=species_params['species_name']))
-                    
+                                if args.protein_id == None:
+                                    genome_features.append(GenomeFeature(nucrec=nucrec, nuc_acc=nucrec_id, nuc_desc=nucrec_desc, feature=feat, strand='+1', species=species_params['species_name']))
+                                else:
+                                    try:
+                                        feat.qualifiers['protein_id'][0]
+                                        if (feat.qualifiers['protein_id'][0]) == args.protein_id:
+                                            print('found ',args.protein_id)
+                                            genome_features.append(GenomeFeature(nucrec=nucrec, nuc_acc=nucrec_id, nuc_desc=nucrec_desc, feature=feat, strand='+1', species=species_params['species_name']))
+                                    except:
+                                        nucrec.features[i]
                     # Same loop for the reverse strand
                     nucrec = nucrec.reverse_complement()
                     for i in range(len(nucrec.features)):
                         feat = nucrec.features[i]
                         if (feat.type == 'CDS'):
                             if (feat.strand == 1):
-                                genome_features.append(GenomeFeature(nucrec=nucrec, nuc_acc=nucrec_id, nuc_desc=nucrec_desc, feature=feat, strand='-1', species=species_params['species_name']))
-
-                # For each GenomeFeature in genome_features, search for upstream and downstream frameshifts
-                for feature in genome_features:
-                    find_upstream_frameshift(feature, params['frame'], params['ustream_limit'], params['stop_codons'], species_params['signals'])
-                    find_downstream_frameshift(feature, params['frame'], params['ustream_limit'], params['stop_codons'], species_params['signals'])
-                print('Writing results to', species_params['species_name'])
-
-                write_to_txt(params["results_dir"] + '/' + species_params['outfile_name'], species_params['species_name'])
-                write_to_csv(params["results_dir"] + '/frameshifts', species_params['species_name'])
-            
-    create_fasta_file_for_blast_db('frameshifts.fasta') 
-    makeblastdb('frameshifts.fasta')
-    blast_search()
+                                if args.protein_id == None:
+                                    genome_features.append(GenomeFeature(nucrec=nucrec, nuc_acc=nucrec_id, nuc_desc=nucrec_desc, feature=feat, strand='-1', species=species_params['species_name']))
+                                else:
+                                    try:
+                                        feat.qualifiers['protein_id'][0]
+                                        if (feat.qualifiers['protein_id'][0]) == args.protein_id:
+                                            print('found ',args.protein_id)
+                                            genome_features.append(GenomeFeature(nucrec=nucrec, nuc_acc=nucrec_id, nuc_desc=nucrec_desc, feature=feat, strand='-1', species=species_params['species_name']))
+                                    except:
+                                        nucrec.features[i]
+        # For each GenomeFeature in genome_features, search for upstream and downstream frameshifts
+        for feature in genome_features:
+            find_upstream_frameshift(feature, params['frame'], params['ustream_limit'], params['stop_codons'], species_params['signals'])
+            find_downstream_frameshift(feature, params['frame'], params['ustream_limit'], params['stop_codons'], species_params['signals'])
+        
+        if args.protein_id == None:
+            for species_name in detected_frameshifts.keys:
+                print('Writing results to', species_name)
+                write_to_txt(params["results_dir"] + '/' + species_name , species_name )
+                write_to_csv(params["results_dir"] + '/frameshifts', species_name)
+    if args.protein_id == None:        
+        create_fasta_file_for_blast_db('frameshifts.fasta') 
+        makeblastdb('frameshifts.fasta')
+        blast_search()
