@@ -27,7 +27,7 @@ import zipfile
 detected_frameshifts = {} # Holds all Frameshift objects created after successful heptamer detection
 genome_features = [] # Holds all GenomeFeature objects created from features read in from genbank files
 
-# start an api_instance 
+# start an api_instance for ncbi datasets
 api_instance = ncbi.datasets.GenomeApi(ncbi.datasets.ApiClient())
 ncbi = NCBITaxa()
 #ncbi.update_taxonomy_database()
@@ -47,6 +47,7 @@ class GenomeFeature:
         self.strand = strand
         self.location = feature.location
         self.location_str = self.location
+        # format -1 strand location to match +1 strand location format when there is a spliced sequence
         if strand == '-1':
             self.location_str = ''
             if len(feature.location.parts) > 1:
@@ -70,14 +71,16 @@ class GenomeFeature:
             self.product = feature.qualifiers['product'][0]
         except:
             self.product = ''
+
         self.annotated = False
         # If CDS has multiple exons
         if self.feature.location_operator == 'join':
+            # If there is only one nucleotide in between two exons, mark this as an annotated frameshift
             if(self.feature.location.parts[1].start - self.feature.location.parts[0].end == 1):
                 self.spliced_seq = self.nucrec[self.location.start:self.location.end].seq
                 self.spliced_seq_true_pos = list(range(int(self.location.start), int(self.location.end)))
                 self.annotated = True
-            else:
+            else:  
                 self.get_spliced_DNA()
         # If CDS has one exon
         else:
@@ -106,16 +109,13 @@ class GenomeFeature:
         '''
         Combines all exons into one sequence for the genome feature
         Return:
-            (seq object, [int]): tuple containing the spliced sequence [0] and an int array of 
-            the true positions for the nucrec
+            None, sets spliced_seq and spliced_seq_true_pos member vars
         '''
         sequence_string = ""
         true_positions = []
         for part in self.location.parts:
-            #print(part)
             true_positions.extend(list(range(int(part.start), int(part.end))))
             sequence_string += str(self.nucrec[part.start:part.end].seq)
-        #print(true_positions,'\n')
         self.spliced_seq = Seq(sequence_string)
         self.spliced_seq_true_pos = true_positions
     
@@ -139,7 +139,7 @@ class GenomeFeature:
         '''
         first_exon_start = self.location.parts[0].start # start of first exon
         if first_exon_start < 10000:
-            upstream_seq = self.nucrec[1:first_exon_start].seq
+            upstream_seq = self.nucrec[0:first_exon_start].seq
             true_positions = list(range(1, int(first_exon_start)+1))
         else:
             upstream_seq = self.nucrec[first_exon_start-10000:first_exon_start].seq
@@ -217,15 +217,17 @@ class Frameshift:
             extended_seq = str(self.genome_feature.spliced_seq) + str(self.genome_feature.downstream_region_seq)
             cur_pos = self.start_pos
         elif self.case == 'Upstream':
-            extended_seq = str(feature.upstream_region_seq) + str(feature.spliced_seq)
+            extended_seq = str(self.genome_feature.upstream_region_seq) + str(self.genome_feature.spliced_seq)
             cur_pos = self.start_pos
+            print(self.start_pos)
         # Traverse extended seq until hit a stop codon or the downstream limit
         while extended_seq[cur_pos:cur_pos+3] not in ["TAG","TAA","TGA"] and (cur_pos-self.start_pos < 10000):
             # At frameshift postion
             if cur_pos == self.heptamer_location:
                 frameshift_seq += str(extended_seq[cur_pos:cur_pos+3])
-                frameshift_translation += str(Seq(extended_seq[cur_pos:cur_pos+3]).translate())
-                #frameshift_seq += str(extended_seq[cur_pos+3:cur_pos+4])
+                #frameshift_translation += str(Seq(extended_seq[cur_pos:cur_pos+3]).translate())
+                #frameshift_seq += str(extended_seq[cur_pos+4:cur_pos+7])
+                #frameshift_translation += str(Seq(extended_seq[cur_pos+4:cur_pos+7]).translate())
                 #print(str(extended_seq[cur_pos:cur_pos+3]), end=' ')
                 #print(str(extended_seq[cur_pos+3:cur_pos+4]), end=' ')
                 cur_pos += 4
@@ -234,12 +236,13 @@ class Frameshift:
             else:
                 frameshift_seq += str(extended_seq[cur_pos:cur_pos+3])
                 #print(str(extended_seq[cur_pos:cur_pos+3]), end=' ')
-                frameshift_translation += str(Seq(extended_seq[cur_pos:cur_pos+3]).translate())
+                #frameshift_translation += str(Seq(extended_seq[cur_pos:cur_pos+3]).translate())
                 #print(extended_seq[cur_pos:cur_pos+3], end='')
                 cur_pos += 3
         
         # Append stop codon to frameshift sequence
         frameshift_seq += str(extended_seq[cur_pos:cur_pos+3])
+        #frameshift_translation += str(Seq(extended_seq[cur_pos:cur_pos+3]).translate())
 
         if str(extended_seq[cur_pos:cur_pos+3]) in ["TAG","TAA","TGA"]:
             self.stop_codon = str(extended_seq[cur_pos:cur_pos+3])
@@ -247,7 +250,7 @@ class Frameshift:
             self.seq_end = cur_pos + 3
         #print()
         self.frameshift_seq = frameshift_seq
-        self.frameshift_translation = frameshift_translation
+        self.frameshift_translation = str(Seq(frameshift_seq).translate())
 
 def download_gbk_files(data_path, assembly_accessions):
     '''
@@ -316,19 +319,22 @@ def find_heptamer(feature, sequence, signals, start_pos, stop_pos, case, args):
         start_pos (int): start position of scan
         stop_pos (int): stop position of scan
     Return:
-        None, prints frameshift sequence + creates and appends Frameshift object detected_frameshifts array
+        frameshifts [Frameshift]: array of Frameshift objects
     '''
     if args.verbose:print('Searching from', start_pos, 'to', stop_pos)
     frameshifts = []
     #print(sequence[start_pos:stop_pos])
     for signal in signals:
         current_pos = start_pos
-        while current_pos < stop_pos:
+        while current_pos < stop_pos and (stop_pos - start_pos >=7):
             if str(sequence[current_pos:current_pos+7]) in signal[0]:
                 print('Found Heptamer', case, feature.strand, feature.accession, feature.locus_tag, feature.protein_id, feature.product)
                 if case == 'Downstream':
+                    #__init__(self, genome_feature, signal_found, signal_score, fs_case, heptamer_location, start_pos, stop_pos):
                     frameshift = Frameshift(feature, signal[0], signal[1], case, current_pos, 0, stop_pos)
                 elif case == 'Upstream':
+                    #frameshift = Frameshift(feature, signal[0], signal[1], case, current_pos, 0, stop_pos)
+                    #print(start_pos, feature.location.end)
                     frameshift = Frameshift(feature, signal[0], signal[1], case, current_pos, start_pos, feature.location.end)
                 #detected_frameshifts[feature.species].append(frameshift)
                 print_pos = start_pos
@@ -369,7 +375,7 @@ def find_upstream_frameshift(feature, shift, ustream_limit, stop_codons, signals
 
     extended_seq = str(feature.upstream_region_seq) + str(feature.spliced_seq)
     destination_start_codon_pos = len(extended_seq) - len(feature.spliced_seq)
-    destination_stop_codon_pos = len(extended_seq) - 3
+    destination_stop_codon_pos = len(extended_seq) - 4
     #print(extended_seq[destination_start_codon_pos:destination_stop_codon_pos+3])
     #print(feature.nucrec[feature.get_true_pos_upstream(destination_start_codon_pos):feature.get_true_pos_upstream(destination_stop_codon_pos+2)+1].seq)
     #print(feature.nucrec[feature.get_true_pos_upstream(destination_start_codon_pos):feature.get_true_pos_upstream(destination_start_codon_pos)+3].seq)
@@ -377,24 +383,25 @@ def find_upstream_frameshift(feature, shift, ustream_limit, stop_codons, signals
     roi_right = destination_stop_codon_pos
     if args.verbose:
         # Print destination frame with spacing 
-        if args.verbose:
-            print('\nDestination Frame: ', end='')
-            for x in range(0, len(feature.spliced_seq)//3):
-                if x == 0:
-                    print(colored(feature.spliced_seq[x*3:x*3+3], 'green'), end=' ')
-                elif x == len(feature.spliced_seq)//3 - 1:
-                    print(colored(feature.spliced_seq[x*3:x*3+3], 'red'))
-                else:
-                    print(feature.spliced_seq[x*3:x*3+3], end=' ')
+        print('\nDestination Frame: ', end='')
+        for x in range(0, len(feature.spliced_seq)//3):
+            if x == 0:
+                print(colored(feature.spliced_seq[x*3:x*3+3], 'green'), end=' ')
+            elif x == len(feature.spliced_seq)//3 - 1:
+                print(colored(feature.spliced_seq[x*3:x*3+3], 'red'))
+            else:
+                print(feature.spliced_seq[x*3:x*3+3], end=' ')
 
     # Find from upstream stop in destination frame
     ustream_count = 0
     current_pos = destination_start_codon_pos
     roi_left = -1
-    while ustream_count < ustream_limit and current_pos >= 0:
+    while ustream_count < ustream_limit and current_pos >= -1:
         if extended_seq[current_pos:current_pos+3] in stop_codons:
             roi_left = current_pos
             break
+        if current_pos == -1:
+            roi_left = 0
         current_pos -= 3
         ustream_count += 3
     if roi_left == -1:
@@ -416,7 +423,8 @@ def find_upstream_frameshift(feature, shift, ustream_limit, stop_codons, signals
     # Shift to source frame to -1 from first upstream stop in destination
     if feature.annotated == False:
         current_pos = current_pos - shift
-    # Find first ATG upstream in source frame
+    # Find first ATG upstream in source frame <- incorrect
+    '''
     roi_left = -1
     while ustream_count < ustream_limit and current_pos >= 0:
         if extended_seq[current_pos:current_pos+3] == 'ATG':
@@ -426,6 +434,7 @@ def find_upstream_frameshift(feature, shift, ustream_limit, stop_codons, signals
         ustream_count += 3
     if roi_left == -1:
         return frameshifts
+    '''
     
     # Print -1 shifted source frame
     if args.verbose:
@@ -444,6 +453,7 @@ def find_upstream_frameshift(feature, shift, ustream_limit, stop_codons, signals
     # Search for stop codons in -1 frame
     source_stop_codon_pos = []
     while current_pos < destination_stop_codon_pos:
+        #print(extended_seq[current_pos:current_pos+3])
         if extended_seq[current_pos:current_pos+3] in stop_codons:
             source_stop_codon_pos.append(current_pos)
             #print(current_pos, extended_seq[current_pos:current_pos+3])
@@ -453,7 +463,7 @@ def find_upstream_frameshift(feature, shift, ustream_limit, stop_codons, signals
          # if first roi, look for start codon from roi left to source first stop, if found search for heptamer
          # from start codon to end 
         if roi == 0:
-            #start_codon_pos = find_start_codon(extended_seq, roi_left-1, source_stop_codon_pos[roi]-1)
+            #start_codon_pos = find_start_codon(extended_seq, roi_left, source_stop_codon_pos[roi])
             #print(start_codon_pos, roi_left-1, source_stop_codon_pos[roi]-1)
             fs = find_heptamer(feature, extended_seq, signals, roi_left, source_stop_codon_pos[roi], 'Upstream', args)
             frameshifts = frameshifts + fs
@@ -483,6 +493,8 @@ def find_downstream_frameshift(feature, shift, ustream_limit, stop_codons, signa
         ustream_limit (int):  how far up we should look
         stop_codons ["",""]: array of strings of stop codons
         signals [("String", Int)]: array of tuples ("Heptamer", Score)
+    Return:
+        frameshifts [Frameshift]: array of Frameshift objects
     '''
     frameshifts = []
     if args.verbose: print('\n********** Searching for downstream frameshift in ', feature.protein_id, feature.locus_tag, '**********')
@@ -576,7 +588,7 @@ def write_to_txt(output_filename, species):
                 outfile.write('\nAnnotated Gene Product:\n' + str(fs.genome_feature.splice().translate()))
                 if fs.case == 'Downstream':
                     outfile.write('\nFrameshift Location: [' + str(fs.genome_feature.get_true_pos_downstream(fs.start_pos)).replace('\'','') + 
-                ':' + str(fs.genome_feature.get_true_pos_downstream(fs.seq_end)).replace('\'','') + '](+)')
+                ':' + str(fs.genome_feature.get_true_pos_downstream(fs.heptamer_location-1)).replace('\'','') + ',[' + str(fs.genome_feature.get_true_pos_downstream(fs.heptamer_location)).replace('\'','') + ':' + str(fs.genome_feature.get_true_pos_downstream(fs.seq_end)).replace('\'','') + '](+)')
                 elif fs.case == 'Upstream':
                     outfile.write('\nFrameshift Location: [' + str(fs.genome_feature.get_true_pos_upstream(fs.start_pos)).replace('\'','') + 
                 ':' + str(fs.genome_feature.get_true_pos_upstream(fs.seq_end)+1).replace('\'','') + '](+)')
@@ -588,6 +600,7 @@ def write_to_csv(output_filename, species):
     '''
     Create and write frameshift information to csv file
     '''
+    print('writing')
     with open(output_filename + '.csv', 'a', newline='') as csvfile:
         csvwriter = csv.writer(csvfile)
         for fs in detected_frameshifts[species]:
@@ -607,13 +620,11 @@ def write_to_csv(output_filename, species):
                 output.append(fs.stop_codon)
                 output.append(str(fs.genome_feature.location_str))
                 if fs.case == 'Downstream':
-                    output.append([str(fs.genome_feature.get_true_pos_downstream(fs.start_pos)).replace('\'','') + ':' + 
-                    str(fs.genome_feature.get_true_pos_downstream(fs.seq_end)).replace('\'','')])
+                    output.append('join{['+str(fs.genome_feature.get_true_pos_downstream(fs.start_pos)).replace('\'','') + ':' + str(fs.genome_feature.get_true_pos_downstream(fs.heptamer_location+3)).replace('\'','') + '],[' +  str(fs.genome_feature.get_true_pos_downstream(fs.heptamer_location+4)).replace('\'','')  + ':' + str(fs.genome_feature.get_true_pos_downstream(fs.seq_end)).replace('\'','') + ']}')
                     #print(fs.genome_feature.get_true_pos_downstream(fs.start_pos), fs.genome_feature.get_true_pos_downstream(fs.seq_end))
                     #print(fs.genome_feature.nucrec[fs.genome_feature.get_true_pos_downstream(fs.start_pos):fs.genome_feature.get_true_pos_downstream(fs.seq_end)].seq)
                 elif fs.case == 'Upstream':
-                    output.append([str(fs.genome_feature.get_true_pos_upstream(fs.start_pos)+1).replace('\'','') + ':' + 
-                    str(fs.genome_feature.get_true_pos_upstream(fs.seq_end)+1).replace('\'','')])
+                    output.append('join{['+str(fs.genome_feature.get_true_pos_upstream(fs.start_pos)).replace('\'','') + ':' + str(fs.genome_feature.get_true_pos_upstream(fs.heptamer_location+3)).replace('\'','') + '],[' +  str(fs.genome_feature.get_true_pos_upstream(fs.heptamer_location+4)).replace('\'','')  + ':' + str(fs.genome_feature.get_true_pos_upstream(fs.seq_end)).replace('\'','') + ']}')
                     #print(fs.genome_feature.get_true_pos_upstream(fs.start_pos), fs.genome_feature.get_true_pos_upstream(fs.seq_end)+1)
                     #print(fs.genome_feature.nucrec[fs.genome_feature.get_true_pos_upstream(fs.start_pos):fs.genome_feature.get_true_pos_upstream(fs.seq_end)+1].seq)
                 output.append(str(len(fs.genome_feature.splice().translate())))
@@ -822,15 +833,16 @@ if __name__ == "__main__":
             with open(params["results_dir"] + '/frameshifts.csv', 'a', newline='') as csvfile:
                 csvwriter = csv.writer(csvfile)
                 csvwriter.writerow(fields)
-
+            
             generate_jsons(params['csv_input_file'], params['fs_inputs_path'])
             assembly_accessions = []
             for input_file in os.listdir(params['fs_inputs_path']):
+                print(input_file)
                 with open(params['fs_inputs_path'] + '/' +input_file) as json_file:  
                     species_params = json.load(json_file)
                     assembly_accessions.append(species_params['assembly_accession'])
             download_gbk_files(params['genome_path'] + '/', assembly_accessions)
-        
+            
         data_path = params['genome_path'] + '/ncbi_dataset/data/'
         for input_file in os.listdir(params['fs_inputs_path']):
             print(input_file)
