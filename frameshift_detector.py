@@ -471,16 +471,18 @@ def find_upstream_frameshift(feature, shift, ustream_limit, stop_codons, signals
         # Else, look for heptamer from destination stop to next destination stop
         if roi == len(source_stop_codon_pos)-1:
             start_codon_pos = find_start_codon(extended_seq, source_stop_codon_pos[roi], destination_stop_codon_pos)
-            #print(start_codon_pos, source_stop_codon_pos[roi]-1, destination_stop_codon_pos)
-            if start_codon_pos != -1:
-                fs = find_heptamer(feature, extended_seq, signals, start_codon_pos, destination_stop_codon_pos, 'Upstream', args)
-                frameshifts = frameshifts + fs
+            if start_codon_pos < destination_start_codon_pos:
+                #print(start_codon_pos, source_stop_codon_pos[roi]-1, destination_stop_codon_pos)
+                if start_codon_pos != -1:
+                    fs = find_heptamer(feature, extended_seq, signals, start_codon_pos, destination_stop_codon_pos, 'Upstream', args)
+                    frameshifts = frameshifts + fs
         else:
             start_codon_pos = find_start_codon(extended_seq, source_stop_codon_pos[roi], source_stop_codon_pos[roi+1])
             #print(start_codon_pos, source_stop_codon_pos[roi]-1, source_stop_codon_pos[roi+1]-1)
-            if start_codon_pos != -1:
-                fs = find_heptamer(feature, extended_seq, signals, start_codon_pos, source_stop_codon_pos[roi+1], 'Upstream', args)
-                frameshifts = frameshifts + fs
+            if start_codon_pos < destination_start_codon_pos:
+                if start_codon_pos != -1:
+                    fs = find_heptamer(feature, extended_seq, signals, start_codon_pos, source_stop_codon_pos[roi+1], 'Upstream', args)
+                    frameshifts = frameshifts + fs
     
     return frameshifts
 
