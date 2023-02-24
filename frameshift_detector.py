@@ -46,14 +46,15 @@ class GenomeFeature:
         self.type = feature.type
         self.strand = strand
         self.location = feature.location
-        self.location_str = self.location
+        self.location_str = str(self.location).replace("(+)", "")
         # format -1 strand location to match +1 strand location format when there is a spliced sequence
         if strand == '-1':
             self.location_str = ''
             if len(feature.location.parts) > 1:
-                     self.location_str += 'join'
+                     self.location_str += 'join{'
             for part in feature.location.parts:
-                self.location_str += '[' + str(len(self.nucrec) - part.start) + ',' + str(len(self.nucrec) - part.end) + '](+)'
+                self.location_str += '[' + str(len(self.nucrec) - part.start) + ',' + str(len(self.nucrec) - part.end) + ']'
+            self.location_str += '}'
         try:
             feature.qualifiers['locus_tag'][0]
             self.locus_tag = feature.qualifiers['locus_tag'][0]
@@ -421,8 +422,8 @@ def find_upstream_frameshift(feature, shift, ustream_limit, stop_codons, signals
         print()
 
     # Shift to source frame to -1 from first upstream stop in destination
-    if feature.annotated == False:
-        current_pos = current_pos - shift
+    #if feature.annotated == False:
+    current_pos = current_pos - shift
     # Find first ATG upstream in source frame <- incorrect
     '''
     roi_left = -1
@@ -482,6 +483,18 @@ def find_upstream_frameshift(feature, shift, ustream_limit, stop_codons, signals
                 frameshifts = frameshifts + fs
     
     return frameshifts
+
+def find_stop_codon(feature, stop_codons):
+    '''
+    Search for stop codon in given feature
+    Parameters:
+        feature (GenomeFeature): search for stop codon for this feature
+    Return:
+        stop_codon_pos: stop codon position
+    '''
+    for x in range(0, len(feature.spliced_seq)//3):
+        if feature.spliced_seq[x*3:x*3+3] in stop_codons:
+            return x*3
             
 def find_downstream_frameshift(feature, shift, ustream_limit, stop_codons, signals, args):
     '''
@@ -499,7 +512,8 @@ def find_downstream_frameshift(feature, shift, ustream_limit, stop_codons, signa
     frameshifts = []
     if args.verbose: print('\n********** Searching for downstream frameshift in ', feature.protein_id, feature.locus_tag, '**********')
     source_start_codon_pos = 0
-    source_stop_codon_pos = len(feature.spliced_seq) - 3 # the stop codon in the source frame
+    #source_stop_codon_pos = len(feature.spliced_seq) - 3 # the stop codon in the source frame # Do not assume annotated stop
+    source_stop_codon_pos = find_stop_codon(feature, stop_codons)
     # Print source frame with spacing 
     if args.verbose:
         print('\nSource Frame: ', end='')
