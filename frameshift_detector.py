@@ -328,6 +328,7 @@ def find_heptamer(feature, sequence, signals, start_pos, stop_pos, case, args):
     for signal in signals:
         current_pos = start_pos
         while current_pos < stop_pos and (stop_pos - start_pos >=7):
+            #print(sequence[current_pos:current_pos+3], end=" ")
             if str(sequence[current_pos:current_pos+7]) in signal[0]:
                 print('Found Heptamer', case, feature.strand, feature.accession, feature.locus_tag, feature.protein_id, feature.product)
                 if case == 'Downstream':
@@ -403,6 +404,7 @@ def find_upstream_frameshift(feature, shift, ustream_limit, stop_codons, signals
             break
         if current_pos == -1:
             roi_left = 0
+            break
         current_pos -= 3
         ustream_count += 3
     if roi_left == -1:
@@ -424,18 +426,17 @@ def find_upstream_frameshift(feature, shift, ustream_limit, stop_codons, signals
     # Shift to source frame to -1 from first upstream stop in destination
     #if feature.annotated == False:
     current_pos = current_pos - shift
-    # Find first ATG upstream in source frame <- incorrect
-    '''
-    roi_left = -1
+    first_ustream_stop = current_pos
+    # Find first ATG upstream in source frame
+    first_ustream_start = -1
     while ustream_count < ustream_limit and current_pos >= 0:
         if extended_seq[current_pos:current_pos+3] == 'ATG':
-            roi_left = current_pos
+            first_ustream_start = current_pos
             break
         current_pos -= 3
         ustream_count += 3
-    if roi_left == -1:
+    if first_ustream_start == -1:
         return frameshifts
-    '''
     
     # Print -1 shifted source frame
     if args.verbose:
@@ -466,7 +467,7 @@ def find_upstream_frameshift(feature, shift, ustream_limit, stop_codons, signals
         if roi == 0:
             #start_codon_pos = find_start_codon(extended_seq, roi_left, source_stop_codon_pos[roi])
             #print(start_codon_pos, roi_left-1, source_stop_codon_pos[roi]-1)
-            fs = find_heptamer(feature, extended_seq, signals, roi_left, source_stop_codon_pos[roi], 'Upstream', args)
+            fs = find_heptamer(feature, extended_seq, signals, first_ustream_stop, source_stop_codon_pos[roi], 'Upstream', args)
             frameshifts = frameshifts + fs
         # Else, look for heptamer from destination stop to next destination stop
         if roi == len(source_stop_codon_pos)-1:
