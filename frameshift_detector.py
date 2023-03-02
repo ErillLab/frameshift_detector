@@ -244,12 +244,10 @@ class Frameshift:
         # Append stop codon to frameshift sequence
         frameshift_seq += str(extended_seq[cur_pos:cur_pos+3])
         #frameshift_translation += str(Seq(extended_seq[cur_pos:cur_pos+3]).translate())
-
         if str(extended_seq[cur_pos:cur_pos+3]) in ["TAG","TAA","TGA"]:
             self.stop_codon = str(extended_seq[cur_pos:cur_pos+3])
-            #print(str(extended_seq[cur_pos:cur_pos+3]), end=' ')
             self.seq_end = cur_pos + 3
-        #print()
+
         self.frameshift_seq = frameshift_seq
         self.frameshift_translation = str(Seq(frameshift_seq).translate())
 
@@ -335,8 +333,8 @@ def find_heptamer(feature, sequence, signals, start_pos, stop_pos, case, args):
                     #__init__(self, genome_feature, signal_found, signal_score, fs_case, heptamer_location, start_pos, stop_pos):
                     frameshift = Frameshift(feature, signal[0], signal[1], case, current_pos, 0, stop_pos)
                 elif case == 'Upstream':
-                    #frameshift = Frameshift(feature, signal[0], signal[1], case, current_pos, 0, stop_pos)
-                    #print(start_pos, feature.location.end)
+                    if (sequence[start_pos:start_pos+3]) != 'ATG':
+                        start_pos = find_codon('ATG', sequence, start_pos, 0)
                     frameshift = Frameshift(feature, signal[0], signal[1], case, current_pos, start_pos, feature.location.end)
                 #detected_frameshifts[feature.species].append(frameshift)
                 print_pos = start_pos
@@ -363,6 +361,19 @@ def find_start_codon(sequence, start_pos, stop_pos):
             return current_pos
         current_pos += 3
     return -1
+
+def find_codon(codon, sequence, start_pos, stop_pos):
+    direction = 0
+    if (stop_pos - start_pos) > 0:
+        direction = 1
+    else:
+        direction = -1
+    for i in range(start_pos, stop_pos, direction * 3):
+        #print(sequence[i:i+3], end=" ")
+        if sequence[i:i+3] == codon:
+            return i
+    return -1
+
 
 def find_upstream_frameshift(feature, shift, ustream_limit, stop_codons, signals, args):
     '''
