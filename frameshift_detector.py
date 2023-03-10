@@ -932,6 +932,6 @@ if __name__ == "__main__":
                 write_to_csv(params["results_dir"] + '/frameshifts', species_name)
     if args.protein_id == None:  
         print()      
-        #create_fasta_file_for_blast_db('frameshifts.fasta') 
-        #makeblastdb('frameshifts.fasta')
-        #blast_search()
+        create_fasta_file_for_blast_db('frameshifts.fasta') 
+        makeblastdb('frameshifts.fasta')
+        blast_search()
