@@ -509,6 +509,7 @@ def find_stop_codon(feature, stop_codons):
     for x in range(0, len(feature.spliced_seq)//3):
         if feature.spliced_seq[x*3:x*3+3] in stop_codons:
             return x*3
+    return -1
             
 def find_downstream_frameshift(feature, shift, ustream_limit, stop_codons, signals, args):
     '''
@@ -715,18 +716,21 @@ def generate_jsons(input_csv, path):
                     continue
                 # TO-DO Apply reference genome filter
                 #if (assembly.assembly_level == 'Complete Genome'):
-                n_chr = len(assembly.chromosomes) if assembly.assembly_level == 'Chromosome' else None
-                print('assembly: ',assembly.assembly_accession)
-                species_dict["assembly_accession"] = assembly.assembly_accession
-                species_dict["assembly_level"] = assembly.assembly_level
-                chromosomes = []
-                for chromosome in assembly.chromosomes:
-                    print('chromosome ', chromosome.name, ': ', chromosome.accession_version)
-                    chromosomes.append(chromosome.accession_version)
-                species_dict["assembly_chromids"] = chromosomes
-            
-                with open(path + '/' + species_dict["outfile_name"] + '_input.json', 'w', encoding='utf-8') as f:
-                    json.dump(species_dict, f, ensure_ascii=False, indent=1)
+                n_chr = len(assembly.chromosomes) 
+                if assembly.assembly_level == 'Chromosome' or assembly.assembly_level == 'Complete Genome':
+                    print('assembly: ',assembly.assembly_accession)
+                    species_dict["assembly_accession"] = assembly.assembly_accession
+                    species_dict["assembly_level"] = assembly.assembly_level
+                    chromosomes = []
+                    for chromosome in assembly.chromosomes:
+                        print('chromosome ', chromosome.name, ': ', chromosome.accession_version)
+                        chromosomes.append(chromosome.accession_version)
+                    species_dict["assembly_chromids"] = chromosomes
+                
+                    with open(path + '/' + species_dict["outfile_name"] + '_input.json', 'w', encoding='utf-8') as f:
+                        json.dump(species_dict, f, ensure_ascii=False, indent=1)
+                else:
+                    None
 
 def create_fasta_file_for_blast_db(fasta_file_name):
     if (os.path.exists(fasta_file_name)):
@@ -812,18 +816,19 @@ def parse_blast_output(output_file, ortho_group):
         for blast_record in blast_records:
             print('\n*************************************************')     
             print(blast_record.query)
-            print("Alignments:")       
+            print("Alignments:")
+            for row in frameshift_list:
+                if row['Protein ID'] == blast_record.query.split(" | ")[2]:
+                    sequence = row['Frameshift Product Length']
+                    print(sequence)
             for alignment in blast_record.alignments:
+                coverage = float(alignment.hsps[0].query_end - alignment.hsps[0].query_start + 1) / float(sequence)
+                print('coverage: ', coverage)
                 for hsp in alignment.hsps:
-                    if hsp.expect < 10E-10:
+                    if hsp.expect < params['blast_e_val_threshold'] and coverage > params['blast_coverage_threshold']:
                         protein_id = alignment.title.split(' | ')[2]
                         print(protein_id, alignment.title.split(' | ')[3])
                         append_ortho_group(protein_id, ortho_group)
-                        #print("length:", alignment.length)
-                        #print("e value:", hsp.expect)
-                        #print(hsp.query[0:75] + "...")
-                        #print(hsp.match[0:75] + "...")
-                        #print(hsp.sbjct[0:75] + "...")
             print('*************************************************\n')
 
 if __name__ == "__main__":
@@ -889,13 +894,30 @@ if __name__ == "__main__":
                         if (feat.type == 'CDS'):
                             if (feat.strand == 1):
                                 if args.protein_id == None:
-                                    genome_features.append(GenomeFeature(nucrec=nucrec, nuc_acc=nucrec_id, nuc_desc=nucrec_desc, feature=feat, strand='+1', species=species_params['species_name']))
+                                    #genome_features.append(GenomeFeature(nucrec=nucrec, nuc_acc=nucrec_id, nuc_desc=nucrec_desc, feature=feat, strand='+1', species=species_params['species_name']))
+                                    feature = GenomeFeature(nucrec=nucrec, nuc_acc=nucrec_id, nuc_desc=nucrec_desc, feature=feat, strand='+1', species=species_params['species_name'])
+                                    us_frameshifts = find_upstream_frameshift(feature, params['frame'], params['ustream_limit'], params['stop_codons'], species_params['signals'], args)
+                                    if len(us_frameshifts) > 0:
+                                        for fs in us_frameshifts:
+                                            detected_frameshifts[feature.species].append(fs)
+                                    ds_frameshifts = find_downstream_frameshift(feature, params['frame'], params['ustream_limit'], params['stop_codons'], species_params['signals'], args)
+                                    if len(ds_frameshifts) > 0:
+                                        for fs in ds_frameshifts:
+                                            detected_frameshifts[feature.species].append(fs)
                                 else:
                                     try:
                                         feat.qualifiers['protein_id'][0]
                                         if (feat.qualifiers['protein_id'][0]) == args.protein_id:
                                             print('found ',args.protein_id)
-                                            genome_features.append(GenomeFeature(nucrec=nucrec, nuc_acc=nucrec_id, nuc_desc=nucrec_desc, feature=feat, strand='+1', species=species_params['species_name']))
+                                            feature = GenomeFeature(nucrec=nucrec, nuc_acc=nucrec_id, nuc_desc=nucrec_desc, feature=feat, strand='+1', species=species_params['species_name'])
+                                            us_frameshifts = find_upstream_frameshift(feature, params['frame'], params['ustream_limit'], params['stop_codons'], species_params['signals'], args)
+                                            if len(us_frameshifts) > 0:
+                                                for fs in us_frameshifts:
+                                                    detected_frameshifts[feature.species].append(fs)
+                                            ds_frameshifts = find_downstream_frameshift(feature, params['frame'], params['ustream_limit'], params['stop_codons'], species_params['signals'], args)
+                                            if len(ds_frameshifts) > 0:
+                                                for fs in ds_frameshifts:
+                                                    detected_frameshifts[feature.species].append(fs)
                                     except:
                                         nucrec.features[i]
                     # Same loop for the reverse strand
@@ -905,13 +927,29 @@ if __name__ == "__main__":
                         if (feat.type == 'CDS'):
                             if (feat.strand == 1):
                                 if args.protein_id == None:
-                                    genome_features.append(GenomeFeature(nucrec=nucrec, nuc_acc=nucrec_id, nuc_desc=nucrec_desc, feature=feat, strand='-1', species=species_params['species_name']))
+                                    feature = GenomeFeature(nucrec=nucrec, nuc_acc=nucrec_id, nuc_desc=nucrec_desc, feature=feat, strand='-1', species=species_params['species_name'])
+                                    us_frameshifts = find_upstream_frameshift(feature, params['frame'], params['ustream_limit'], params['stop_codons'], species_params['signals'], args)
+                                    if len(us_frameshifts) > 0:
+                                        for fs in us_frameshifts:
+                                            detected_frameshifts[feature.species].append(fs)
+                                    ds_frameshifts = find_downstream_frameshift(feature, params['frame'], params['ustream_limit'], params['stop_codons'], species_params['signals'], args)
+                                    if len(ds_frameshifts) > 0:
+                                        for fs in ds_frameshifts:
+                                            detected_frameshifts[feature.species].append(fs)
                                 else:
                                     try:
                                         feat.qualifiers['protein_id'][0]
                                         if (feat.qualifiers['protein_id'][0]) == args.protein_id:
                                             print('found ',args.protein_id)
-                                            genome_features.append(GenomeFeature(nucrec=nucrec, nuc_acc=nucrec_id, nuc_desc=nucrec_desc, feature=feat, strand='-1', species=species_params['species_name']))
+                                            feature = GenomeFeature(nucrec=nucrec, nuc_acc=nucrec_id, nuc_desc=nucrec_desc, feature=feat, strand='-1', species=species_params['species_name'])
+                                            us_frameshifts = find_upstream_frameshift(feature, params['frame'], params['ustream_limit'], params['stop_codons'], species_params['signals'], args)
+                                            if len(us_frameshifts) > 0:
+                                                for fs in us_frameshifts:
+                                                    detected_frameshifts[feature.species].append(fs)
+                                            ds_frameshifts = find_downstream_frameshift(feature, params['frame'], params['ustream_limit'], params['stop_codons'], species_params['signals'], args)
+                                            if len(ds_frameshifts) > 0:
+                                                for fs in ds_frameshifts:
+                                                    detected_frameshifts[feature.species].append(fs)
                                     except:
                                         nucrec.features[i]
         # For each GenomeFeature in genome_features, search for upstream and downstream frameshifts

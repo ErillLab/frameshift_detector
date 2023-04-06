@@ -6,6 +6,8 @@
     "dstream_limit" : 10000,
     "stop_codons" : ["TAG","TAA","TGA"],
     "start_codons" : ["ATG"],
+    "blast_e_val_threshold" : 10E-10,
+    "blast_coverage_threshold" : 0.80,
     "csv_input_file": "species_and_heptamers.csv",
     "results_dir": "results"
 }
