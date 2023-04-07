@@ -658,6 +658,7 @@ def write_to_csv(output_filename, species):
                     #print(fs.genome_feature.nucrec[fs.genome_feature.get_true_pos_upstream(fs.start_pos):fs.genome_feature.get_true_pos_upstream(fs.seq_end)+1].seq)
                 output.append(str(len(fs.genome_feature.splice().translate())))
                 output.append(str(len(fs.frameshift_translation)))
+                output.append(str(len(fs.frameshift_translation) - len(fs.genome_feature.splice().translate())))
                 output.append(str(fs.genome_feature.splice().translate()))
                 output.append(str(fs.frameshift_translation))
                 output.append(fs.get_original_seq())
@@ -745,14 +746,14 @@ def create_fasta_file_for_blast_db(fasta_file_name):
             with open(params["results_dir"] + '/' + file, newline='') as csvfile:
                 frameshift_csv = csv.DictReader(csvfile)
                 for row in frameshift_csv:
-                    fasta_row = '>' + row['Species'] + ' | ' + row['Locus Tag'] + ' | ' + row['Protein ID'] + ' | ' + row['Product'] + '\n' + row['Frameshift Product'] + '\n'
+                    fasta_row = '>' + row['Species'] + ' | ' + row['Locus Tag'] + ' | ' + row['Protein ID'] + ' | ' + row['Product'] + ' | ' + row['Frameshift Product Length'] + '\n' + row['Frameshift Product'] + '\n'
                     fasta_file.write(fasta_row)
     fasta_file.close()
 
 def create_blast_query_file(csv_row, species):
     fasta_file_name = 'query_files/' + csv_row['Protein ID'] + '.fasta'
     fasta_file = open( fasta_file_name, 'w+')
-    fasta_row = '>' + species + ' | ' + csv_row['Locus Tag'] + ' | ' + csv_row['Protein ID'] + ' | ' + csv_row['Product'] + '\n' + csv_row['Frameshift Product'] + '\n'
+    fasta_row = '>' + species + ' | ' + csv_row['Locus Tag'] + ' | ' + csv_row['Protein ID'] + ' | ' + csv_row['Product'] + ' | ' + csv_row['Frameshift Product Length'] + '\n' + csv_row['Frameshift Product'] + '\n'
     fasta_file.write(fasta_row)
     fasta_file.close()
     return fasta_file_name
@@ -805,7 +806,11 @@ def blast_search():
                 # Write results
                 print('Updating fs conservation csv')
                 with open(params["results_dir"] + '/fs_conservation.csv', 'w', newline='') as conservation_csv_file:
-                    writer = csv.DictWriter(conservation_csv_file, fieldnames=frameshift_csv.fieldnames)
+                    fields = ['Species','Accession', 'Description', 'Locus Tag', 'Protein ID', 'Known', 'Product', 'Strand', 'Case', 'Signal', 'Signal Score', 'Frameshift Stop Codon', 
+        'Annotated Gene Location', 'Frameshift Location', 'Annotated Gene Product Length', 'Frameshift Product Length', 'Product Length Diff', 'Annotated Gene Product', 
+        'Frameshift Product', 'Spliced Annotated Gene Sequence', 'Spliced Frameshift Sequence', 'Orthology Group']
+                    writer = csv.DictWriter(conservation_csv_file, fieldnames=fields)
+                    writer.writeheader()
                     for row in frameshift_list:
                         writer.writerow(row)
                         
@@ -816,13 +821,11 @@ def parse_blast_output(output_file, ortho_group):
         for blast_record in blast_records:
             print('\n*************************************************')     
             print(blast_record.query)
+            input_seq_len = blast_record.query.split(" | ")[4]
+            print("Input sequence length: ", input_seq_len)
             print("Alignments:")
-            for row in frameshift_list:
-                if row['Protein ID'] == blast_record.query.split(" | ")[2]:
-                    sequence = row['Frameshift Product Length']
-                    print(sequence)
             for alignment in blast_record.alignments:
-                coverage = float(alignment.hsps[0].query_end - alignment.hsps[0].query_start + 1) / float(sequence)
+                coverage = float(alignment.hsps[0].query_end - alignment.hsps[0].query_start + 1) / float(input_seq_len)
                 print('coverage: ', coverage)
                 for hsp in alignment.hsps:
                     if hsp.expect < params['blast_e_val_threshold'] and coverage > params['blast_coverage_threshold']:
@@ -861,7 +864,7 @@ if __name__ == "__main__":
             os.makedirs(params["results_dir"])
 
             fields = ['Species','Accession', 'Description', 'Locus Tag', 'Protein ID', 'Known', 'Product', 'Strand', 'Case', 'Signal', 'Signal Score', 'Frameshift Stop Codon', 
-        'Annotated Gene Location', 'Frameshift Location', 'Annotated Gene Product Length', 'Frameshift Product Length', 'Annotated Gene Product', 
+        'Annotated Gene Location', 'Frameshift Location', 'Annotated Gene Product Length', 'Frameshift Product Length', 'Product Length Diff', 'Annotated Gene Product', 
         'Frameshift Product', 'Spliced Annotated Gene Sequence', 'Spliced Frameshift Sequence', 'Orthology Group']
             with open(params["results_dir"] + '/frameshifts.csv', 'a', newline='') as csvfile:
                 csvwriter = csv.writer(csvfile)
