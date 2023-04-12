@@ -419,7 +419,7 @@ def find_upstream_frameshift(feature, shift, ustream_limit, stop_codons, signals
         current_pos -= 3
         ustream_count += 3
     if roi_left == -1:
-        return
+        return frameshifts
     # Print destination after finding the first upstream stop
     if args.verbose:
         print('\nSource Frame Before -1: ', end='')
@@ -746,14 +746,14 @@ def create_fasta_file_for_blast_db(fasta_file_name):
             with open(params["results_dir"] + '/' + file, newline='') as csvfile:
                 frameshift_csv = csv.DictReader(csvfile)
                 for row in frameshift_csv:
-                    fasta_row = '>' + row['Species'] + ' | ' + row['Locus Tag'] + ' | ' + row['Protein ID'] + ' | ' + row['Product'] + ' | ' + row['Frameshift Product Length'] + '\n' + row['Frameshift Product'] + '\n'
+                    fasta_row = '>' + row['Species'] + ' | ' + row['Locus Tag'] + ' | ' + row['Protein ID'] + ' | ' + row['Product'] + ' | ' + row['Frameshift Product Length'] + ' | ' + row['Frameshift Location'] + '\n' + row['Frameshift Product'] + '\n'
                     fasta_file.write(fasta_row)
     fasta_file.close()
 
 def create_blast_query_file(csv_row, species):
     fasta_file_name = 'query_files/' + csv_row['Protein ID'] + '.fasta'
     fasta_file = open( fasta_file_name, 'w+')
-    fasta_row = '>' + species + ' | ' + csv_row['Locus Tag'] + ' | ' + csv_row['Protein ID'] + ' | ' + csv_row['Product'] + ' | ' + csv_row['Frameshift Product Length'] + '\n' + csv_row['Frameshift Product'] + '\n'
+    fasta_row = '>' + species + ' | ' + csv_row['Locus Tag'] + ' | ' + csv_row['Protein ID'] + ' | ' + csv_row['Product'] + ' | ' + csv_row['Frameshift Product Length'] + ' | ' + csv_row['Frameshift Location'] + '\n' + csv_row['Frameshift Product'] + '\n'
     fasta_file.write(fasta_row)
     fasta_file.close()
     return fasta_file_name
@@ -763,11 +763,38 @@ def makeblastdb(fasta_file_name):
     cmd = 'makeblastdb -in {input} -out {out} -dbtype prot'
     os.system(cmd.format(input=fasta_file_name, out=blast_db))
 
-def append_ortho_group(protein_id, group_num):
+def append_ortho_group(protein_id, fs_location, group_num):
     global frameshift_list
     for row in frameshift_list:
-        if row['Protein ID'] == protein_id:
+        if row['Protein ID'] == protein_id and row['Frameshift Location'] == fs_location:
             row['Orthology Group'] = group_num
+
+def reciprocal_blast_search(original_protein_id, original_fs_location, hit_protein_id, hit_fs_location):
+    cmd = 'blastp -query {query} -db {db} -evalue {e} -out {out} -outfmt 5'
+    blast_db = './db/blast_db'
+
+    for row in frameshift_list:
+        if row['Protein ID'] == hit_protein_id and row['Frameshift Location'] == hit_fs_location:
+            output_file = 'blast_output/' + hit_protein_id + '.xml'
+            query_fasta = create_blast_query_file(row, hit_protein_id)
+            os.system(cmd.format(query=query_fasta, db=blast_db, e=params['blast_e_val_threshold'] ,out=output_file))
+            with open(output_file) as blast_output:
+                blast_records = list(NCBIXML.parse(blast_output))
+                for blast_record in blast_records:  
+                    print(blast_record.query)
+                    input_seq_len = blast_record.query.split(" | ")[4]
+                    for alignment in blast_record.alignments:
+                        align_protein_id = alignment.title.split(' | ')[2]
+                        align_fs_location = alignment.title.split(' | ')[5]
+                        if align_protein_id == original_protein_id and align_fs_location == original_fs_location:
+                            coverage = float(alignment.hsps[0].query_end - alignment.hsps[0].query_start + 1) / float(input_seq_len)
+                            print('reciprocal blast coverage: ', coverage)
+                            for hsp in alignment.hsps:
+                                if hsp.expect < params['blast_e_val_threshold'] and coverage > params['blast_coverage_threshold']:
+                                    print(hit_protein_id, '->', original_protein_id)
+                                    return True
+            break
+
 
 def blast_search():
     print('Beginning blast search')
@@ -783,8 +810,6 @@ def blast_search():
     if folder_check == True:
         shutil.rmtree('blast_output')
     os.makedirs('blast_output')
-    
-    e_val = 10E-10
 
     ortho_group = 1
     for file in os.listdir(params["results_dir"]):
@@ -796,10 +821,10 @@ def blast_search():
                 frameshift_list = list(frameshift_csv)
                 for row in frameshift_list:
                     if row['Orthology Group'] == "None":
-                        append_ortho_group(row['Protein ID'], ortho_group)
+                        append_ortho_group(row['Protein ID'], row['Frameshift Location'], ortho_group)
                         output_file = 'blast_output/' + row['Protein ID'] + '.xml'
                         query_fasta = create_blast_query_file(row, file.replace('_', ' ')[:-4])
-                        os.system(cmd.format(query=query_fasta, db=blast_db, e=e_val ,out=output_file))
+                        os.system(cmd.format(query=query_fasta, db=blast_db, e=params['blast_e_val_threshold'] ,out=output_file))
                         parse_blast_output(output_file, ortho_group)
                         ortho_group += 1
                 
@@ -822,6 +847,8 @@ def parse_blast_output(output_file, ortho_group):
             print('\n*************************************************')     
             print(blast_record.query)
             input_seq_len = blast_record.query.split(" | ")[4]
+            input_seq_protein_id = blast_record.query.split(" | ")[2]
+            input_seq_fs_location = blast_record.query.split(" | ")[5]
             print("Input sequence length: ", input_seq_len)
             print("Alignments:")
             for alignment in blast_record.alignments:
@@ -829,9 +856,11 @@ def parse_blast_output(output_file, ortho_group):
                 print('coverage: ', coverage)
                 for hsp in alignment.hsps:
                     if hsp.expect < params['blast_e_val_threshold'] and coverage > params['blast_coverage_threshold']:
-                        protein_id = alignment.title.split(' | ')[2]
-                        print(protein_id, alignment.title.split(' | ')[3])
-                        append_ortho_group(protein_id, ortho_group)
+                        hit_protein_id = alignment.title.split(' | ')[2]
+                        hit_fs_location = alignment.title.split(' | ')[5]
+                        if reciprocal_blast_search(input_seq_protein_id, input_seq_fs_location, hit_protein_id, hit_fs_location):
+                            print(input_seq_protein_id, alignment.title.split(' | ')[3])
+                            append_ortho_group(hit_protein_id, hit_fs_location, ortho_group)
             print('*************************************************\n')
 
 if __name__ == "__main__":
