@@ -173,7 +173,10 @@ class GenomeFeature:
         '''
         # combine spliced sequence and downstream region position arrays, lookup pos from combined seq
         combined_sequence_pos = self.upstream_region_true_pos + self.spliced_seq_true_pos
+        if (len(combined_sequence_pos) == spliced_sequence_pos):
+            return spliced_sequence_pos
         if self.strand == '+1':
+            print(len(combined_sequence_pos), spliced_sequence_pos)
             return combined_sequence_pos[spliced_sequence_pos]
         else:
             return len(self.nucrec) - combined_sequence_pos[spliced_sequence_pos]
@@ -599,6 +602,7 @@ def write_to_txt(output_filename, species):
     with open(output_filename+'.txt','w') as outfile:
         for fs in detected_frameshifts[species]:
             if fs.stop_codon != 'None':
+                print(fs.genome_feature.protein_id)
                 outfile.write('\n\nSpecies: ' + fs.genome_feature.species)
                 outfile.write('\nAccession: ' + fs.genome_feature.accession)
                 outfile.write('\nDescription: ' + fs.genome_feature.description)
@@ -706,17 +710,15 @@ def generate_jsons(input_csv, path):
         genome_summary = api_instance.assembly_descriptors_by_taxon(
             taxon=str(taxid),
             page_size=100,
-            filters_assembly_source='refseq')
+            filters_assembly_source='all')
         #print(genome_summary)
         print('Species:', species)
-        #print(f"Number of assemblies: {genome_summary.total_count}")
+        print(f"Number of assemblies: {genome_summary.total_count}")
         
         if genome_summary.total_count != None:
             for assembly in map(lambda d: d.assembly, genome_summary.assemblies):
                 if not assembly.annotation_metadata:
                     continue
-                # TO-DO Apply reference genome filter
-                #if (assembly.assembly_level == 'Complete Genome'):
                 n_chr = len(assembly.chromosomes) 
                 if assembly.assembly_level == 'Chromosome' or assembly.assembly_level == 'Complete Genome':
                     print('assembly: ',assembly.assembly_accession)
@@ -730,9 +732,10 @@ def generate_jsons(input_csv, path):
                 
                     with open(path + '/' + species_dict["outfile_name"] + '_input.json', 'w', encoding='utf-8') as f:
                         json.dump(species_dict, f, ensure_ascii=False, indent=1)
+                    break
                 else:
                     None
-
+                    
 def create_fasta_file_for_blast_db(fasta_file_name):
     if (os.path.exists(fasta_file_name)):
         os.remove(fasta_file_name)
