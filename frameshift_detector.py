@@ -59,19 +59,19 @@ class GenomeFeature:
             feature.qualifiers['locus_tag'][0]
             self.locus_tag = feature.qualifiers['locus_tag'][0]
         except:
-            self.locus_tag = ''
+            self.locus_tag = 'N/A'
 
         try:
             feature.qualifiers['protein_id'][0]
             self.protein_id = feature.qualifiers['protein_id'][0]
         except:
-            self.protein_id = ''
+            self.protein_id = 'N/A'
 
         try:
             feature.qualifiers['product'][0]
             self.product = feature.qualifiers['product'][0]
         except:
-            self.product = ''
+            self.product = 'N/A'
 
         self.annotated = False
         # If CDS has multiple exons
@@ -264,7 +264,7 @@ def download_gbk_files(data_path, assembly_accessions):
     '''
     chromosomes = ['']
     exclude_sequence = False
-    include_annotation_type = ['GENOME_GB']
+    include_annotation_type = ['GENOME_GBFF', 'GENOME_GB']
 
     api_response = api_instance.download_assembly_package(
         assembly_accessions,
@@ -282,36 +282,6 @@ def download_gbk_files(data_path, assembly_accessions):
     with zipfile.ZipFile('genome_data.zip', 'r') as zip_ref:
         zip_ref.extractall(data_path)
 
-    '''
-    Entrez.email=entrez_email
-    Entrez.api_key=entrez_api_key
-
-    folder_check = os.path.isdir(genome_path)
-    if folder_check == False:
-        os.makedirs(genome_path)
-
-    dir_contents = os.listdir(genome_path)
-    #for each chromid in assembly, download GBK, and save using accession number
-    print("Downloading GBK files and saving using accession number")
-    for chromid_id in chromids:
-        print(chromid_id)
-        if chromid_id is not None:
-            if args.verbose: print("Processing download of: " + chromid_id)
-            #check whether the chromid is already in
-            if not((chromid_id + '.gb') in dir_contents):
-                if args.verbose: print("--> Downloading: " + chromid_id)
-                #retrieve genome record
-                net_handle = Entrez.efetch(db="nuccore",id=chromid_id,
-                                            rettype='gbwithparts', retmode="txt")
-                chromid_record=net_handle.read()
-                time.sleep(1.5)
-                #write the record to file
-                out_handle = open(genome_path + '/' + chromid_id + ".gb", "w")
-                out_handle.write(chromid_record)
-                time.sleep(1.5)
-                out_handle.close()
-                net_handle.close()
-    '''
 def find_heptamer(feature, sequence, signals, start_pos, stop_pos, case, args):
     '''
     Search for heptamer in geneome feature within the given range
@@ -720,6 +690,7 @@ def generate_jsons(input_csv, path):
                 if not assembly.annotation_metadata:
                     continue
                 n_chr = len(assembly.chromosomes) 
+                print(assembly)
                 if assembly.assembly_level == 'Chromosome' or assembly.assembly_level == 'Complete Genome':
                     print('assembly: ',assembly.assembly_accession)
                     species_dict["assembly_accession"] = assembly.assembly_accession
@@ -733,8 +704,18 @@ def generate_jsons(input_csv, path):
                     with open(path + '/' + species_dict["outfile_name"] + '_input.json', 'w', encoding='utf-8') as f:
                         json.dump(species_dict, f, ensure_ascii=False, indent=1)
                     break
+                elif assembly.assembly_level == 'Scaffold':
+                    chromosomes = []
+                    species_dict["assembly_accession"] = assembly.assembly_accession
+                    species_dict["assembly_level"] = assembly.assembly_level
+                    chromosomes.append(assembly.assembly_accession)
+                    species_dict["assembly_chromids"] = chromosomes
+                    with open(path + '/' + species_dict["outfile_name"] + '_input.json', 'w', encoding='utf-8') as f:
+                        json.dump(species_dict, f, ensure_ascii=False, indent=1)
+                    break
                 else:
                     None
+                
                     
 def create_fasta_file_for_blast_db(fasta_file_name):
     if (os.path.exists(fasta_file_name)):
@@ -798,6 +779,93 @@ def reciprocal_blast_search(original_protein_id, original_fs_location, hit_prote
                                     return True
             break
 
+def add_percent_ids():
+    print("Adding %IDs")
+    import pandas as pd
+    csvData = pd.read_csv(params["results_dir"] + '/fs_conservation.csv')                                 
+    # sort data frame
+    csvData.sort_values(["Orthology Group"], 
+                        axis=0,
+                        ascending=[True], 
+                        inplace=True)
+    csvData.to_csv(params["results_dir"] + '/fs_conservation_sorted.csv')
+    ortho_group_percent_identities = {}
+    with open(params["results_dir"] + '/fs_conservation_sorted.csv', newline='') as fs_csv_file:
+        frameshift_list = csv.DictReader(fs_csv_file)
+        curr_ortho_group = 1
+        orthologs = []
+        for row in frameshift_list:
+            print(row['Orthology Group'], curr_ortho_group)
+            if int(row['Orthology Group']) == curr_ortho_group:
+                orthologs.append(row)
+            else:
+                avg_percent_id = calculate_avg_percent_id(orthologs)
+                #row['Average Percent ID'] = avg_percent_id
+                ortho_group_percent_identities[str(curr_ortho_group)] = avg_percent_id
+                curr_ortho_group += 1
+                orthologs = []
+                orthologs.append(row)
+    with open(params["results_dir"] + '/fs_conservation_sorted.csv', newline='') as fs_csv_file:
+        frameshift_list = csv.DictReader(fs_csv_file)
+        with open(params["results_dir"] + '/fs_conservation_final.csv', 'w',newline='') as fs_csv_file_final:
+            fieldnames = frameshift_list.fieldnames
+            fieldnames.append('Average Percent ID')
+            writer = csv.DictWriter(fs_csv_file_final, fieldnames=fieldnames)
+            writer.writeheader()
+            for row in frameshift_list:
+                row['Average Percent ID'] = ortho_group_percent_identities[row["Orthology Group"]]
+                writer.writerow(row)
+        
+
+def calculate_avg_percent_id(protein_ids):
+    sum_percent_ids = 0
+    num_proteins = 0
+    print("len(protein_ids)", len(protein_ids))
+    for protein in protein_ids:
+        print(protein['Protein ID'], end=' ')
+        file_path = 'blast_output/' + protein['Protein ID'] + '.xml'
+        print(file_path)
+        if os.path.isfile(file_path):
+            print(protein['Protein ID'])
+            
+            with open(file_path) as blast_output:
+                blast_records = list(NCBIXML.parse(blast_output))
+                
+                for blast_record in blast_records:
+                    #print(blast_record.query)
+                    input_seq_len = blast_record.query.split(" | ")[4]
+                    input_seq_protein_id = blast_record.query.split(" | ")[2]
+                    input_seq_fs_location = blast_record.query.split(" | ")[5]
+                    print('input', input_seq_protein_id, input_seq_fs_location)
+                    for protein_query in protein_ids:
+                        if protein_query['Frameshift Location']==input_seq_fs_location and protein_query['Protein ID']==input_seq_protein_id:
+                            print('removed here',protein_query['Protein ID'], protein_query['Frameshift Location'])
+                            protein_ids.remove(protein_query) 
+                    for alignment in blast_record.alignments:
+                        hit_protein_id = alignment.title.split(' | ')[2]
+                        hit_fs_location = alignment.title.split(' | ')[5]
+                        for protein_tmp in protein_ids:
+                            if protein_tmp['Protein ID'] == hit_protein_id and protein_tmp['Frameshift Location'] == hit_fs_location:
+                                coverage = float(alignment.hsps[0].query_end - alignment.hsps[0].query_start + 1) / float(input_seq_len)
+                                for hsp in alignment.hsps:
+                                    if hsp.expect < params['blast_e_val_threshold'] and coverage > params['blast_coverage_threshold']:
+                                        sum_percent_ids += hsp.identities/(hsp.align_length-hsp.gaps) * 100
+                                        break
+                                protein_ids.remove(protein_tmp) 
+                                print('removed', protein_tmp['Protein ID'], protein_tmp['Frameshift Location'],hsp.identities/(hsp.align_length-hsp.gaps) * 100)
+                                
+                                num_proteins += 1
+            #if protein in protein_ids:
+                    #protein_ids.remove(protein)
+                    ##print('removed here',protein['Protein ID'], protein['Frameshift Location'])
+                                        
+    if num_proteins > 0:
+        print(num_proteins)
+        avg_percent_id = sum_percent_ids/num_proteins
+    else:
+        avg_percent_id = 0
+    print('avg percent id',avg_percent_id)
+    return avg_percent_id
 
 def blast_search():
     print('Beginning blast search')
@@ -887,7 +955,7 @@ if __name__ == "__main__":
     global params
     with open(args.input[0]) as json_file:  
         params = json.load(json_file)
-
+    #'''
     if not args.find_conservation:
         if args.protein_id == None:
             folder_check = os.path.isdir(params["results_dir"] )
@@ -926,67 +994,76 @@ if __name__ == "__main__":
                     # For each feature in the genebank file, create a GenomeFeature object and store in global genome_features array
                     for i in range(len(nucrec.features)):
                         feat = nucrec.features[i]
-                        if (feat.type == 'CDS'):
-                            if (feat.strand == 1):
-                                if args.protein_id == None:
-                                    #genome_features.append(GenomeFeature(nucrec=nucrec, nuc_acc=nucrec_id, nuc_desc=nucrec_desc, feature=feat, strand='+1', species=species_params['species_name']))
-                                    feature = GenomeFeature(nucrec=nucrec, nuc_acc=nucrec_id, nuc_desc=nucrec_desc, feature=feat, strand='+1', species=species_params['species_name'])
-                                    us_frameshifts = find_upstream_frameshift(feature, params['frame'], params['ustream_limit'], params['stop_codons'], species_params['signals'], args)
-                                    if len(us_frameshifts) > 0:
-                                        for fs in us_frameshifts:
-                                            detected_frameshifts[feature.species].append(fs)
-                                    ds_frameshifts = find_downstream_frameshift(feature, params['frame'], params['ustream_limit'], params['stop_codons'], species_params['signals'], args)
-                                    if len(ds_frameshifts) > 0:
-                                        for fs in ds_frameshifts:
-                                            detected_frameshifts[feature.species].append(fs)
-                                else:
-                                    try:
-                                        feat.qualifiers['protein_id'][0]
-                                        if (feat.qualifiers['protein_id'][0]) == args.protein_id:
-                                            print('found ',args.protein_id)
-                                            feature = GenomeFeature(nucrec=nucrec, nuc_acc=nucrec_id, nuc_desc=nucrec_desc, feature=feat, strand='+1', species=species_params['species_name'])
-                                            us_frameshifts = find_upstream_frameshift(feature, params['frame'], params['ustream_limit'], params['stop_codons'], species_params['signals'], args)
-                                            if len(us_frameshifts) > 0:
-                                                for fs in us_frameshifts:
-                                                    detected_frameshifts[feature.species].append(fs)
-                                            ds_frameshifts = find_downstream_frameshift(feature, params['frame'], params['ustream_limit'], params['stop_codons'], species_params['signals'], args)
-                                            if len(ds_frameshifts) > 0:
-                                                for fs in ds_frameshifts:
-                                                    detected_frameshifts[feature.species].append(fs)
-                                    except:
-                                        nucrec.features[i]
+                        try:
+                            feat.qualifiers['protein_id'][0]
+                            if (feat.type == 'CDS'):
+                                if (feat.strand == 1):
+                                    if args.protein_id == None:
+
+                                        #genome_features.append(GenomeFeature(nucrec=nucrec, nuc_acc=nucrec_id, nuc_desc=nucrec_desc, feature=feat, strand='+1', species=species_params['species_name']))
+                                        feature = GenomeFeature(nucrec=nucrec, nuc_acc=nucrec_id, nuc_desc=nucrec_desc, feature=feat, strand='+1', species=species_params['species_name'])
+                                        us_frameshifts = find_upstream_frameshift(feature, params['frame'], params['ustream_limit'], params['stop_codons'], species_params['signals'], args)
+                                        if len(us_frameshifts) > 0:
+                                            for fs in us_frameshifts:
+                                                detected_frameshifts[feature.species].append(fs)
+                                        ds_frameshifts = find_downstream_frameshift(feature, params['frame'], params['ustream_limit'], params['stop_codons'], species_params['signals'], args)
+                                        if len(ds_frameshifts) > 0:
+                                            for fs in ds_frameshifts:
+                                                detected_frameshifts[feature.species].append(fs)
+                                    else:
+                                        try:
+                                            feat.qualifiers['protein_id'][0]
+                                            if (feat.qualifiers['protein_id'][0]) == args.protein_id:
+                                                print('found ',args.protein_id)
+                                                feature = GenomeFeature(nucrec=nucrec, nuc_acc=nucrec_id, nuc_desc=nucrec_desc, feature=feat, strand='+1', species=species_params['species_name'])
+                                                us_frameshifts = find_upstream_frameshift(feature, params['frame'], params['ustream_limit'], params['stop_codons'], species_params['signals'], args)
+                                                if len(us_frameshifts) > 0:
+                                                    for fs in us_frameshifts:
+                                                        detected_frameshifts[feature.species].append(fs)
+                                                ds_frameshifts = find_downstream_frameshift(feature, params['frame'], params['ustream_limit'], params['stop_codons'], species_params['signals'], args)
+                                                if len(ds_frameshifts) > 0:
+                                                    for fs in ds_frameshifts:
+                                                        detected_frameshifts[feature.species].append(fs)
+                                        except:
+                                            nucrec.features[i]
+                        except:
+                            continue
                     # Same loop for the reverse strand
                     nucrec = nucrec.reverse_complement()
                     for i in range(len(nucrec.features)):
                         feat = nucrec.features[i]
-                        if (feat.type == 'CDS'):
-                            if (feat.strand == 1):
-                                if args.protein_id == None:
-                                    feature = GenomeFeature(nucrec=nucrec, nuc_acc=nucrec_id, nuc_desc=nucrec_desc, feature=feat, strand='-1', species=species_params['species_name'])
-                                    us_frameshifts = find_upstream_frameshift(feature, params['frame'], params['ustream_limit'], params['stop_codons'], species_params['signals'], args)
-                                    if len(us_frameshifts) > 0:
-                                        for fs in us_frameshifts:
-                                            detected_frameshifts[feature.species].append(fs)
-                                    ds_frameshifts = find_downstream_frameshift(feature, params['frame'], params['ustream_limit'], params['stop_codons'], species_params['signals'], args)
-                                    if len(ds_frameshifts) > 0:
-                                        for fs in ds_frameshifts:
-                                            detected_frameshifts[feature.species].append(fs)
-                                else:
-                                    try:
-                                        feat.qualifiers['protein_id'][0]
-                                        if (feat.qualifiers['protein_id'][0]) == args.protein_id:
-                                            print('found ',args.protein_id)
-                                            feature = GenomeFeature(nucrec=nucrec, nuc_acc=nucrec_id, nuc_desc=nucrec_desc, feature=feat, strand='-1', species=species_params['species_name'])
-                                            us_frameshifts = find_upstream_frameshift(feature, params['frame'], params['ustream_limit'], params['stop_codons'], species_params['signals'], args)
-                                            if len(us_frameshifts) > 0:
-                                                for fs in us_frameshifts:
-                                                    detected_frameshifts[feature.species].append(fs)
-                                            ds_frameshifts = find_downstream_frameshift(feature, params['frame'], params['ustream_limit'], params['stop_codons'], species_params['signals'], args)
-                                            if len(ds_frameshifts) > 0:
-                                                for fs in ds_frameshifts:
-                                                    detected_frameshifts[feature.species].append(fs)
-                                    except:
-                                        nucrec.features[i]
+                        try:
+                            feat.qualifiers['protein_id'][0]
+                            if (feat.type == 'CDS'):
+                                if (feat.strand == 1):
+                                    if args.protein_id == None:
+                                        feature = GenomeFeature(nucrec=nucrec, nuc_acc=nucrec_id, nuc_desc=nucrec_desc, feature=feat, strand='-1', species=species_params['species_name'])
+                                        us_frameshifts = find_upstream_frameshift(feature, params['frame'], params['ustream_limit'], params['stop_codons'], species_params['signals'], args)
+                                        if len(us_frameshifts) > 0:
+                                            for fs in us_frameshifts:
+                                                detected_frameshifts[feature.species].append(fs)
+                                        ds_frameshifts = find_downstream_frameshift(feature, params['frame'], params['ustream_limit'], params['stop_codons'], species_params['signals'], args)
+                                        if len(ds_frameshifts) > 0:
+                                            for fs in ds_frameshifts:
+                                                detected_frameshifts[feature.species].append(fs)
+                                    else:
+                                        try:
+                                            feat.qualifiers['protein_id'][0]
+                                            if (feat.qualifiers['protein_id'][0]) == args.protein_id:
+                                                print('found ',args.protein_id)
+                                                feature = GenomeFeature(nucrec=nucrec, nuc_acc=nucrec_id, nuc_desc=nucrec_desc, feature=feat, strand='-1', species=species_params['species_name'])
+                                                us_frameshifts = find_upstream_frameshift(feature, params['frame'], params['ustream_limit'], params['stop_codons'], species_params['signals'], args)
+                                                if len(us_frameshifts) > 0:
+                                                    for fs in us_frameshifts:
+                                                        detected_frameshifts[feature.species].append(fs)
+                                                ds_frameshifts = find_downstream_frameshift(feature, params['frame'], params['ustream_limit'], params['stop_codons'], species_params['signals'], args)
+                                                if len(ds_frameshifts) > 0:
+                                                    for fs in ds_frameshifts:
+                                                        detected_frameshifts[feature.species].append(fs)
+                                        except:
+                                            nucrec.features[i]
+                        except:
+                            continue
         # For each GenomeFeature in genome_features, search for upstream and downstream frameshifts
         for feature in genome_features:
             us_frameshifts = find_upstream_frameshift(feature, params['frame'], params['ustream_limit'], params['stop_codons'], species_params['signals'], args)
@@ -1008,3 +1085,5 @@ if __name__ == "__main__":
         create_fasta_file_for_blast_db('frameshifts.fasta') 
         makeblastdb('frameshifts.fasta')
         blast_search()
+    #'''
+    add_percent_ids()
