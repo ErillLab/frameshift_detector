@@ -23,6 +23,7 @@ import time
 import os
 import shutil
 import zipfile
+from collections import namedtuple
 
 detected_frameshifts = {} # Holds all Frameshift objects created after successful heptamer detection
 genome_features = [] # Holds all GenomeFeature objects created from features read in from genbank files
@@ -220,6 +221,7 @@ class Frameshift:
         if self.case == 'Downstream':
             extended_seq = str(self.genome_feature.spliced_seq) + str(self.genome_feature.downstream_region_seq)
             cur_pos = self.start_pos
+            print('cur_pos',cur_pos)
         elif self.case == 'Upstream':
             extended_seq = str(self.genome_feature.upstream_region_seq) + str(self.genome_feature.spliced_seq)
             cur_pos = self.start_pos
@@ -630,6 +632,13 @@ def write_to_csv(output_filename, species):
                     output.append('join{['+str(fs.genome_feature.get_true_pos_upstream(fs.start_pos)).replace('\'','') + ':' + str(fs.genome_feature.get_true_pos_upstream(fs.heptamer_location+3)).replace('\'','') + '],[' +  str(fs.genome_feature.get_true_pos_upstream(fs.heptamer_location+4)).replace('\'','')  + ':' + str(fs.genome_feature.get_true_pos_upstream(fs.seq_end)).replace('\'','') + ']}')
                     #print(fs.genome_feature.get_true_pos_upstream(fs.start_pos), fs.genome_feature.get_true_pos_upstream(fs.seq_end)+1)
                     #print(fs.genome_feature.nucrec[fs.genome_feature.get_true_pos_upstream(fs.start_pos):fs.genome_feature.get_true_pos_upstream(fs.seq_end)+1].seq)
+                if fs.case == 'Downstream':
+                    output.append('join{['+str(fs.start_pos)+ ':' + str(fs.heptamer_location+3) + '],[' +  str(fs.heptamer_location+4) + ':' + str(fs.seq_end) + ']}')
+                    #print(fs.genome_feature.get_true_pos_downstream(fs.start_pos), fs.genome_feature.get_true_pos_downstream(fs.seq_end))
+                    #print(fs.genome_feature.nucrec[fs.genome_feature.get_true_pos_downstream(fs.start_pos):fs.genome_feature.get_true_pos_downstream(fs.seq_end)].seq)
+                elif fs.case == 'Upstream':
+                    output.append('join{['+str(fs.start_pos-fs.start_pos) + ':' + str(fs.heptamer_location+3-fs.start_pos)+ '],[' +  str(fs.heptamer_location+4-fs.start_pos)  + ':' + str(fs.seq_end-fs.start_pos) + ']}')
+                    
                 output.append(str(len(fs.genome_feature.splice().translate())))
                 output.append(str(len(fs.frameshift_translation)))
                 output.append(str(len(fs.frameshift_translation) - len(fs.genome_feature.splice().translate())))
@@ -715,35 +724,52 @@ def generate_jsons(input_csv, path):
                     break
                 else:
                     None
-                
-                    
-def create_fasta_file_for_blast_db(fasta_file_name):
+def get_fs_csv_row(protein_id, fs_location):
+    with open(params["results_dir"] + '/fs_conservation_sorted.csv', newline='') as fs_csv_file:
+        frameshift_list = csv.DictReader(fs_csv_file)
+        for row in frameshift_list:
+            #print(row['Protein ID'], row['Frameshift Location'])
+            if row['Protein ID'] == protein_id and row['Frameshift Location'] == fs_location:  
+                return row
+
+def create_fasta_file_for_blast_db(fasta_file_name, rows):
     if (os.path.exists(fasta_file_name)):
         os.remove(fasta_file_name)
 
     print('Creating fasta file for blast db')
     fasta_file = open(fasta_file_name, 'w+')
-
-    # Open frameshift csv file(s) and add to fasta file for blast db
-    for file in os.listdir(params["results_dir"]):
-        if(file[-3:] == 'csv'):
-            with open(params["results_dir"] + '/' + file, newline='') as csvfile:
-                frameshift_csv = csv.DictReader(csvfile)
-                for row in frameshift_csv:
-                    fasta_row = '>' + row['Species'] + ' | ' + row['Locus Tag'] + ' | ' + row['Protein ID'] + ' | ' + row['Product'] + ' | ' + row['Frameshift Product Length'] + ' | ' + row['Frameshift Location'] + '\n' + row['Frameshift Product'] + '\n'
-                    fasta_file.write(fasta_row)
+    
+    if rows == None:
+        # Open frameshift csv file(s) and add to fasta file for blast db
+        for file in os.listdir(params["results_dir"]):
+            if(file[-3:] == 'csv'):
+                with open(params["results_dir"] + '/' + file, newline='') as csvfile:
+                    frameshift_csv = csv.DictReader(csvfile)
+                    for row in frameshift_csv:
+                        fasta_row = '>' + row['Species'] + ' | ' + row['Locus Tag'] + ' | ' + row['Protein ID'] + ' | ' + row['Product'] + ' | ' + row['Frameshift Product Length'] + ' | ' + row['Frameshift Location'] + '\n' + row['Frameshift Product'] + '\n'
+                        fasta_file.write(fasta_row)
+    else:
+        for row in rows:
+            fasta_row = '>' + row['Species'] + ' | ' + row['Locus Tag'] + ' | ' + row['Protein ID'] + ' | ' + row['Product'] + ' | ' + row['Frameshift Product Length'] + ' | ' + row['Frameshift Location'] + '\n' + row['Frameshift Product'] + '\n'
+            fasta_file.write(fasta_row)
     fasta_file.close()
 
-def create_blast_query_file(csv_row, species):
-    fasta_file_name = 'query_files/' + csv_row['Protein ID'] + '.fasta'
+def create_blast_query_file(csv_row, species, ortho_group):
+    if ortho_group == None:
+        fasta_file_name = 'query_files/' + csv_row['Protein ID'] + '.fasta'
+    else:
+        folder_check = os.path.isdir('query_files/' + str(ortho_group) + '/')
+        if folder_check == False:
+            os.makedirs('query_files/' + str(ortho_group) + '/')
+        fasta_file_name = 'query_files/' + str(ortho_group) + '/' + csv_row['Protein ID'] + '_' + csv_row['Frameshift Location']+ '.fasta'
     fasta_file = open( fasta_file_name, 'w+')
     fasta_row = '>' + species + ' | ' + csv_row['Locus Tag'] + ' | ' + csv_row['Protein ID'] + ' | ' + csv_row['Product'] + ' | ' + csv_row['Frameshift Product Length'] + ' | ' + csv_row['Frameshift Location'] + '\n' + csv_row['Frameshift Product'] + '\n'
     fasta_file.write(fasta_row)
     fasta_file.close()
     return fasta_file_name
 
-def makeblastdb(fasta_file_name):
-    blast_db = './db/blast_db'
+def makeblastdb(fasta_file_name, db_name):
+    blast_db = './' + db_name
     cmd = 'makeblastdb -in {input} -out {out} -dbtype prot'
     os.system(cmd.format(input=fasta_file_name, out=blast_db))
 
@@ -756,11 +782,11 @@ def append_ortho_group(protein_id, fs_location, group_num):
 def reciprocal_blast_search(original_protein_id, original_fs_location, hit_protein_id, hit_fs_location):
     cmd = 'blastp -query {query} -db {db} -evalue {e} -out {out} -outfmt 5'
     blast_db = './db/blast_db'
-
+    
     for row in frameshift_list:
         if row['Protein ID'] == hit_protein_id and row['Frameshift Location'] == hit_fs_location:
             output_file = 'blast_output/' + hit_protein_id + '.xml'
-            query_fasta = create_blast_query_file(row, hit_protein_id)
+            query_fasta = create_blast_query_file(row, hit_protein_id, None)
             os.system(cmd.format(query=query_fasta, db=blast_db, e=params['blast_e_val_threshold'] ,out=output_file))
             with open(output_file) as blast_output:
                 blast_records = list(NCBIXML.parse(blast_output))
@@ -779,97 +805,122 @@ def reciprocal_blast_search(original_protein_id, original_fs_location, hit_prote
                                     return True
             break
 
-def add_percent_ids():
-    print("Adding %IDs")
-    import pandas as pd
-    csvData = pd.read_csv(params["results_dir"] + '/fs_conservation.csv')                                 
-    # sort data frame
-    csvData.sort_values(["Orthology Group"], 
-                        axis=0,
-                        ascending=[True], 
-                        inplace=True)
-    csvData.to_csv(params["results_dir"] + '/fs_conservation_sorted.csv')
+def fs_blast_search(db, ortho_group):
+    cmd = 'blastp -query "{query}" -db {db} -evalue {e} -out "{out}" -outfmt 5'
+    blast_db = db
     ortho_group_percent_identities = {}
-    with open(params["results_dir"] + '/fs_conservation_sorted.csv', newline='') as fs_csv_file:
-        frameshift_list = csv.DictReader(fs_csv_file)
-        curr_ortho_group = 1
-        orthologs = []
-        for row in frameshift_list:
-            print(row['Orthology Group'], curr_ortho_group)
-            if int(row['Orthology Group']) == curr_ortho_group:
-                orthologs.append(row)
-            else:
-                avg_percent_id = calculate_avg_percent_id(orthologs)
-                #row['Average Percent ID'] = avg_percent_id
-                ortho_group_percent_identities[str(curr_ortho_group)] = avg_percent_id
-                curr_ortho_group += 1
-                orthologs = []
-                orthologs.append(row)
-    with open(params["results_dir"] + '/fs_conservation_sorted.csv', newline='') as fs_csv_file:
-        frameshift_list = csv.DictReader(fs_csv_file)
-        with open(params["results_dir"] + '/fs_conservation_final.csv', 'w',newline='') as fs_csv_file_final:
-            fieldnames = frameshift_list.fieldnames
-            fieldnames.append('Average Percent ID')
-            writer = csv.DictWriter(fs_csv_file_final, fieldnames=fieldnames)
-            writer.writeheader()
-            for row in frameshift_list:
-                row['Average Percent ID'] = ortho_group_percent_identities[row["Orthology Group"]]
-                writer.writerow(row)
-        
+    query_file_path = 'query_files/' + str(ortho_group) + '/'
+    for fasta_file in os.listdir(query_file_path):
+        output_file_path = 'blast_output/' + str(ortho_group) + '/'
+        folder_check = os.path.isdir(output_file_path)
+        if folder_check == False:
+            os.makedirs(output_file_path)
+        output_file = output_file_path + fasta_file.split('.fasta')[0] + '.xml'
+        os.system(cmd.format(query=query_file_path + fasta_file, db=db, e=params['blast_e_val_threshold'] ,out=output_file))
+        ortho_group_percent_identities[fasta_file.split('.fasta')[0]] = parse_fs_blast_output(output_file, ortho_group)
+    print(ortho_group_percent_identities)
+    return ortho_group_percent_identities
+    
 
-def calculate_avg_percent_id(protein_ids):
-    sum_percent_ids = 0
-    num_proteins = 0
-    print("len(protein_ids)", len(protein_ids))
-    for protein in protein_ids:
-        print(protein['Protein ID'], end=' ')
-        file_path = 'blast_output/' + protein['Protein ID'] + '.xml'
-        print(file_path)
-        if os.path.isfile(file_path):
-            print(protein['Protein ID'])
-            
-            with open(file_path) as blast_output:
-                blast_records = list(NCBIXML.parse(blast_output))
-                
-                for blast_record in blast_records:
-                    #print(blast_record.query)
-                    input_seq_len = blast_record.query.split(" | ")[4]
-                    input_seq_protein_id = blast_record.query.split(" | ")[2]
-                    input_seq_fs_location = blast_record.query.split(" | ")[5]
-                    print('input', input_seq_protein_id, input_seq_fs_location)
-                    for protein_query in protein_ids:
-                        if protein_query['Frameshift Location']==input_seq_fs_location and protein_query['Protein ID']==input_seq_protein_id:
-                            print('removed here',protein_query['Protein ID'], protein_query['Frameshift Location'])
-                            protein_ids.remove(protein_query) 
-                    for alignment in blast_record.alignments:
-                        hit_protein_id = alignment.title.split(' | ')[2]
-                        hit_fs_location = alignment.title.split(' | ')[5]
-                        for protein_tmp in protein_ids:
-                            if protein_tmp['Protein ID'] == hit_protein_id and protein_tmp['Frameshift Location'] == hit_fs_location:
-                                coverage = float(alignment.hsps[0].query_end - alignment.hsps[0].query_start + 1) / float(input_seq_len)
-                                for hsp in alignment.hsps:
-                                    if hsp.expect < params['blast_e_val_threshold'] and coverage > params['blast_coverage_threshold']:
-                                        sum_percent_ids += hsp.identities/(hsp.align_length-hsp.gaps) * 100
-                                        break
-                                protein_ids.remove(protein_tmp) 
-                                print('removed', protein_tmp['Protein ID'], protein_tmp['Frameshift Location'],hsp.identities/(hsp.align_length-hsp.gaps) * 100)
-                                
-                                num_proteins += 1
-            #if protein in protein_ids:
-                    #protein_ids.remove(protein)
-                    ##print('removed here',protein['Protein ID'], protein['Frameshift Location'])
-                                        
-    if num_proteins > 0:
-        print(num_proteins)
-        avg_percent_id = sum_percent_ids/num_proteins
+def parse_fs_blast_output(output_file, ortho_group):
+    nfs_percent_ids = {}
+    fs_percent_ids = {}
+    avg_nfs_percent_id = 0
+    avg_fs_percent_id = 0
+    sequence_count = 0
+    with open(output_file) as blast_output:
+        blast_records = list(NCBIXML.parse(blast_output))
+        for blast_record in blast_records:
+            print('\n*************************************************\n',blast_record.query)
+            input_seq_len = blast_record.query.split(" | ")[4]
+            input_seq_protein_id = blast_record.query.split(" | ")[2]
+            input_seq_fs_location = blast_record.query.split(" | ")[5]
+            #print("Input sequence length: ", input_seq_len)
+            print("Alignments:")
+            for alignment in blast_record.alignments:
+                if alignment.title.split(' | ')[2] != input_seq_protein_id and alignment.title.split(' | ')[5] != input_seq_fs_location:
+                    for hsp in alignment.hsps:
+                        if hsp.expect < params['blast_e_val_threshold']:
+                            hit_protein_id = alignment.title.split(' | ')[2]
+                            hit_fs_location = alignment.title.split(' | ')[5]
+                            #hit_csv_row = get_fs_csv_row(hit_protein_id, hit_fs_location)
+                            input_csv_row = get_fs_csv_row(input_seq_protein_id, input_seq_fs_location)
+                            coordinates = get_fs_coordinates(input_csv_row, hsp.query_start-1)
+                            hit_segments = get_fs_segments(input_csv_row, hsp.sbjct, coordinates)
+                            input_segments = get_fs_segments(input_csv_row, hsp.query, coordinates)
+                            fs_percent_id = calculate_segment_percent_id(input_segments.fs_segment, hit_segments.fs_segment)
+                            nfs_percent_id = calculate_segment_percent_id(input_segments.nfs_segment, hit_segments.nfs_segment)
+                            avg_fs_percent_id += fs_percent_id
+                            avg_nfs_percent_id += nfs_percent_id
+                            nfs_percent_ids[hit_protein_id + '_' + hit_fs_location] = nfs_percent_id
+                            fs_percent_ids[hit_protein_id + '_' +hit_fs_location] = fs_percent_id
+                            sequence_count += 1
+                            print('hit: ',hit_protein_id, hit_fs_location)
+                            print('input_seq_len: ', input_seq_len)
+                            print('alignment_len: ', hsp.align_length)
+                            print('sbjct offset:', hsp.sbjct_start)
+                            print('query offset:', hsp.query_start)
+                            print('coordinates: ', coordinates)
+                            print('hit_segments.fs_segment\n',hit_segments.fs_segment)
+                            print('hit_segments.nfs_segment\n',hit_segments.nfs_segment)
+                            print('input seq rel pos\n', input_csv_row['Frameshift Location (Rel)'])
+                            print('input_segments.fs_segment\n',input_segments.fs_segment)
+                            print('input_segments.nfs_segment\n', input_segments.nfs_segment)
+                            print('hsp.query\n',hsp.query)
+                            print('hsp.sbjct\n',hsp.sbjct)
+                            print('FS %ID',fs_percent_id)
+                            print('NFS %ID',nfs_percent_id)
+                            break
+                            
+    if sequence_count > 0:
+        avg_fs_percent_id = avg_fs_percent_id/sequence_count
+        avg_nfs_percent_id = avg_nfs_percent_id/sequence_count
     else:
-        avg_percent_id = 0
-    print('avg percent id',avg_percent_id)
-    return avg_percent_id
+        avg_fs_percent_id = 0
+        avg_nfs_percent_id = 0
+    #print(fs_percent_ids, '\n', nfs_percent_ids, '\n', avg_fs_percent_id,'\n', avg_nfs_percent_id)
+    return {'fs_percent_ids':fs_percent_ids, 'nfs_percent_ids':nfs_percent_ids, 'avg_fs_percent_id':avg_fs_percent_id, 'avg_nfs_percent_id':avg_nfs_percent_id}
 
+def get_fs_coordinates(fs_row, offset):
+    rel_coordinates = fs_row['Frameshift Location (Rel)'].strip('join{').strip('}').split(',')
+    begin_pos = 0
+    fs_pos = int(int(rel_coordinates[0].strip('[').strip(']').split(':')[1])/3) - offset
+    end_pos = int(int(rel_coordinates[1].strip('[').strip(']').split(':')[1])/3) - 1 - offset
+    return (begin_pos, fs_pos, end_pos)
+
+def get_fs_segments(fs_row, alignment_seq, coordinates):
+    if fs_row['Case'] == 'Downstream':
+        NFS_segment = alignment_seq[coordinates[0]:coordinates[1]]
+        FS_segment = alignment_seq[coordinates[1]:coordinates[2]]
+        print('alignment_seq\n',alignment_seq)
+        print('FS_segment: ', FS_segment)
+        print('NFS_segment: ', NFS_segment)
+    else:
+        FS_segment = alignment_seq[coordinates[0]:coordinates[1]]
+        NFS_segment = alignment_seq[coordinates[1]:coordinates[2]]
+
+    FS_segments = namedtuple('FS_segments', 'fs_segment nfs_segment')
+    
+    return FS_segments(FS_segment, NFS_segment) 
+
+def calculate_segment_percent_id(segment_one, segment_two):
+    identity = 0
+    gaps = 0
+    align_len = len(segment_one)
+    for i in range(0,align_len):
+        if segment_one[i] == segment_two[i]:
+            identity += 1
+        elif segment_one[i] == '-' or segment_two[i] == '-':
+            gaps += 1
+    if (align_len - gaps) > 0:
+        return identity/(align_len - gaps) * 100
+    else:
+        return 0
+    
+    
 def blast_search():
     print('Beginning blast search')
-    cmd = 'blastp -query {query} -db {db} -evalue {e} -out {out} -outfmt 5'
+    cmd = "blastp -query {query} -db {db} -evalue {e} -out {out} -outfmt 5"
     blast_db = './db/blast_db'
     
     folder_check = os.path.isdir('query_files')
@@ -894,7 +945,7 @@ def blast_search():
                     if row['Orthology Group'] == "None":
                         append_ortho_group(row['Protein ID'], row['Frameshift Location'], ortho_group)
                         output_file = 'blast_output/' + row['Protein ID'] + '.xml'
-                        query_fasta = create_blast_query_file(row, file.replace('_', ' ')[:-4])
+                        query_fasta = create_blast_query_file(row, file.replace('_', ' ')[:-4], None)
                         os.system(cmd.format(query=query_fasta, db=blast_db, e=params['blast_e_val_threshold'] ,out=output_file))
                         parse_blast_output(output_file, ortho_group)
                         ortho_group += 1
@@ -903,14 +954,13 @@ def blast_search():
                 print('Updating fs conservation csv')
                 with open(params["results_dir"] + '/fs_conservation.csv', 'w', newline='') as conservation_csv_file:
                     fields = ['Species','Accession', 'Description', 'Locus Tag', 'Protein ID', 'Known', 'Product', 'Strand', 'Case', 'Signal', 'Signal Score', 'Frameshift Stop Codon', 
-        'Annotated Gene Location', 'Frameshift Location', 'Annotated Gene Product Length', 'Frameshift Product Length', 'Product Length Diff', 'Annotated Gene Product', 
+        'Annotated Gene Location', 'Frameshift Location', 'Frameshift Location (Rel)', 'Annotated Gene Product Length', 'Frameshift Product Length', 'Product Length Diff', 'Annotated Gene Product', 
         'Frameshift Product', 'Spliced Annotated Gene Sequence', 'Spliced Frameshift Sequence', 'Orthology Group']
                     writer = csv.DictWriter(conservation_csv_file, fieldnames=fields)
                     writer.writeheader()
                     for row in frameshift_list:
                         writer.writerow(row)
                         
-
 def parse_blast_output(output_file, ortho_group):
     with open(output_file) as blast_output:
         blast_records = list(NCBIXML.parse(blast_output))
@@ -934,6 +984,129 @@ def parse_blast_output(output_file, ortho_group):
                             append_ortho_group(hit_protein_id, hit_fs_location, ortho_group)
             print('*************************************************\n')
 
+def add_percent_ids():
+    print("Adding %IDs")
+    import pandas as pd
+    csvData = pd.read_csv(params["results_dir"] + '/fs_conservation.csv')                                 
+    # sort data frame
+    csvData.sort_values(["Orthology Group"], 
+                        axis=0,
+                        ascending=[True], 
+                        inplace=True)
+    csvData.to_csv(params["results_dir"] + '/fs_conservation_sorted.csv')
+    ortho_group_percent_identities = {}
+    ortho_group_percent_identities_segments = {}
+
+    folder_check = os.path.isdir('blast_db_fasta_files')
+    if folder_check == True:
+        shutil.rmtree('blast_db_fasta_files')
+    os.makedirs('blast_db_fasta_files')
+
+    with open(params["results_dir"] + '/fs_conservation_sorted.csv', newline='') as fs_csv_file:
+        frameshift_list = csv.DictReader(fs_csv_file)
+        curr_ortho_group = 1
+        orthologs = []
+        for row in frameshift_list:
+            print(row['Orthology Group'], curr_ortho_group)
+            if int(row['Orthology Group']) == curr_ortho_group:
+                orthologs.append(row)
+            else:
+                if len(orthologs) > 1:
+                    fs_blast_db_fasta_file_name = 'blast_db_fasta_files/' + 'frameshifts_' + str(curr_ortho_group) + '.fasta'
+                    fs_blast_db = './fs_dbs/' + str(curr_ortho_group) + '_db/blast_db'
+                    create_fasta_file_for_blast_db(fs_blast_db_fasta_file_name, orthologs) 
+                    makeblastdb(fs_blast_db_fasta_file_name, fs_blast_db)
+                    for ortholog in orthologs:
+                        create_blast_query_file(ortholog, ortholog['Species'], curr_ortho_group)
+                    ortho_group_percent_identities_segments[str(curr_ortho_group)] = fs_blast_search(fs_blast_db, curr_ortho_group)
+
+                avg_percent_id = calculate_avg_percent_id(orthologs)
+                ortho_group_percent_identities[str(curr_ortho_group)] = avg_percent_id
+                curr_ortho_group += 1
+                orthologs = []
+                orthologs.append(row)
+    print(ortho_group_percent_identities_segments)
+
+    with open(params["results_dir"] + '/fs_conservation_sorted.csv', newline='') as fs_csv_file:
+        frameshift_list = csv.DictReader(fs_csv_file)
+        with open(params["results_dir"] + '/fs_conservation_final.csv', 'w',newline='') as fs_csv_file_final:
+            fieldnames = frameshift_list.fieldnames
+            fieldnames.append('Average Percent ID')
+            fieldnames.append('NFS Segment')
+            fieldnames.append('FS Segment')
+            fieldnames.append('NFS Segment Length')
+            fieldnames.append('FS Segment Length')
+            fieldnames.append('NFS Segment Avg %ID')
+            fieldnames.append('FS Segment Avg %ID')
+            fieldnames.append('NFS Accession: %ID')
+            fieldnames.append('FS Accession: %ID')
+            writer = csv.DictWriter(fs_csv_file_final, fieldnames=fieldnames)
+            writer.writeheader()
+            for row in frameshift_list:
+                row['Average Percent ID'] = ortho_group_percent_identities[row["Orthology Group"]]
+                if row['Case'] == 'Downstream':
+                    rel_coordinates = row['Frameshift Location (Rel)'].strip('join{').strip('}').split(',')
+                    row['NFS Segment'] = row['Frameshift Product'][0:int(int(rel_coordinates[0].strip('[').strip(']').split(':')[1])/3)]
+                    row['FS Segment'] = row['Frameshift Product'][int(int(rel_coordinates[0].strip('[').strip(']').split(':')[1])/3):int(int(rel_coordinates[1].strip('[').strip(']').split(':')[1])-1/3)]
+                    row['NFS Segment Length'] = len(row['NFS Segment'])
+                    row['FS Segment Length'] = len(row['FS Segment'])
+                else:
+                    rel_coordinates = row['Frameshift Location (Rel)'].strip('join{').strip('}').split(',')
+                    row['FS Segment'] = row['Frameshift Product'][0:int(int(rel_coordinates[0].strip('[').strip(']').split(':')[1])/3)]
+                    row['NFS Segment'] = row['Frameshift Product'][int(int(rel_coordinates[0].strip('[').strip(']').split(':')[1])/3):int(int(rel_coordinates[1].strip('[').strip(']').split(':')[1])-1/3)]
+                    row['FS Segment Length'] = len(row['FS Segment'])
+                    row['NFS Segment Length'] = len(row['NFS Segment'])
+                if row["Orthology Group"] in ortho_group_percent_identities_segments:
+                    fs_segments_dict = ortho_group_percent_identities_segments[row["Orthology Group"]][row["Protein ID"]+'_'+row["Frameshift Location"]]
+                    row['NFS Segment Avg %ID'] = fs_segments_dict['avg_nfs_percent_id']
+                    row['FS Segment Avg %ID'] = fs_segments_dict['avg_fs_percent_id']
+                    row['NFS Accession: %ID'] = fs_segments_dict['nfs_percent_ids']
+                    row['FS Accession: %ID'] = fs_segments_dict['fs_percent_ids']
+                writer.writerow(row)
+        
+def calculate_avg_percent_id(protein_ids):
+    sum_percent_ids = 0
+    num_proteins = 0
+    print("len(protein_ids)", len(protein_ids))
+    for protein in protein_ids:
+        print(protein['Protein ID'], end=' ')
+        file_path = 'blast_output/' + protein['Protein ID'] + '.xml'
+        print(file_path)
+        if os.path.isfile(file_path):
+            print(protein['Protein ID'])
+            with open(file_path) as blast_output:
+                blast_records = list(NCBIXML.parse(blast_output))
+                for blast_record in blast_records:
+                    #print(blast_record.query)
+                    input_seq_len = blast_record.query.split(" | ")[4]
+                    input_seq_protein_id = blast_record.query.split(" | ")[2]
+                    input_seq_fs_location = blast_record.query.split(" | ")[5]
+                    print('input', input_seq_protein_id, input_seq_fs_location)
+                    for protein_query in protein_ids:
+                        if protein_query['Frameshift Location']==input_seq_fs_location and protein_query['Protein ID']==input_seq_protein_id:
+                            protein_ids.remove(protein_query) 
+                    for alignment in blast_record.alignments:
+                        hit_protein_id = alignment.title.split(' | ')[2]
+                        hit_fs_location = alignment.title.split(' | ')[5]
+                        for protein_tmp in protein_ids:
+                            if protein_tmp['Protein ID'] == hit_protein_id and protein_tmp['Frameshift Location'] == hit_fs_location:
+                                coverage = float(alignment.hsps[0].query_end - alignment.hsps[0].query_start + 1) / float(input_seq_len)
+                                for hsp in alignment.hsps:
+                                    if hsp.expect < params['blast_e_val_threshold'] and coverage > params['blast_coverage_threshold']:
+                                        sum_percent_ids += hsp.identities/(hsp.align_length-hsp.gaps) * 100
+                                        break
+                                protein_ids.remove(protein_tmp) 
+                                #print('removed', protein_tmp['Protein ID'], protein_tmp['Frameshift Location'],hsp.identities/(hsp.align_length-hsp.gaps) * 100)                    
+                                num_proteins += 1
+                                        
+    if num_proteins > 0:
+        print(num_proteins)
+        avg_percent_id = sum_percent_ids/num_proteins
+    else:
+        avg_percent_id = 0
+    print('avg percent id',avg_percent_id)
+    return avg_percent_id
+
 if __name__ == "__main__":
     # Create argument parser
     parser = argparse.ArgumentParser(description='Find some frameshifts')
@@ -955,7 +1128,7 @@ if __name__ == "__main__":
     global params
     with open(args.input[0]) as json_file:  
         params = json.load(json_file)
-    #'''
+    '''
     if not args.find_conservation:
         if args.protein_id == None:
             folder_check = os.path.isdir(params["results_dir"] )
@@ -964,7 +1137,7 @@ if __name__ == "__main__":
             os.makedirs(params["results_dir"])
 
             fields = ['Species','Accession', 'Description', 'Locus Tag', 'Protein ID', 'Known', 'Product', 'Strand', 'Case', 'Signal', 'Signal Score', 'Frameshift Stop Codon', 
-        'Annotated Gene Location', 'Frameshift Location', 'Annotated Gene Product Length', 'Frameshift Product Length', 'Product Length Diff', 'Annotated Gene Product', 
+        'Annotated Gene Location', 'Frameshift Location', 'Frameshift Location (Rel)', 'Annotated Gene Product Length', 'Frameshift Product Length', 'Product Length Diff', 'Annotated Gene Product', 
         'Frameshift Product', 'Spliced Annotated Gene Sequence', 'Spliced Frameshift Sequence', 'Orthology Group']
             with open(params["results_dir"] + '/frameshifts.csv', 'a', newline='') as csvfile:
                 csvwriter = csv.writer(csvfile)
@@ -1082,8 +1255,8 @@ if __name__ == "__main__":
                 write_to_csv(params["results_dir"] + '/frameshifts', species_name)
     if args.protein_id == None:  
         print()      
-        create_fasta_file_for_blast_db('frameshifts.fasta') 
-        makeblastdb('frameshifts.fasta')
+        create_fasta_file_for_blast_db('frameshifts.fasta', None) 
+        makeblastdb('frameshifts.fasta', 'main_db/blast_db')
         blast_search()
-    #'''
+    '''
     add_percent_ids()
