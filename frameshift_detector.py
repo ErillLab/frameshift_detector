@@ -1128,7 +1128,7 @@ if __name__ == "__main__":
     global params
     with open(args.input[0]) as json_file:  
         params = json.load(json_file)
-    '''
+    
     if not args.find_conservation:
         if args.protein_id == None:
             folder_check = os.path.isdir(params["results_dir"] )
@@ -1258,5 +1258,4 @@ if __name__ == "__main__":
         create_fasta_file_for_blast_db('frameshifts.fasta', None) 
         makeblastdb('frameshifts.fasta', 'main_db/blast_db')
         blast_search()
-    '''
-    add_percent_ids()
+        add_percent_ids()
