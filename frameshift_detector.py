@@ -6,14 +6,10 @@ heptameric sequences, and show frameshift conservation
 Example usage: python3 frameshift_detector.py input.json --verbose 
 '''
 
-from calendar import c
-from ctypes import alignment
 from termcolor import colored
 from Bio import Entrez, SeqIO
 from Bio.Seq import Seq
 from Bio.Blast import NCBIXML
-from lib2to3.pgen2.tokenize import generate_tokens
-from posixpath import split
 import ncbi.datasets
 from ete3 import NCBITaxa
 import argparse
@@ -26,7 +22,6 @@ import zipfile
 from collections import namedtuple
 
 detected_frameshifts = {} # Holds all Frameshift objects created after successful heptamer detection
-genome_features = [] # Holds all GenomeFeature objects created from features read in from genbank files
 
 # start an api_instance for ncbi datasets
 api_instance = ncbi.datasets.GenomeApi(ncbi.datasets.ApiClient())
@@ -37,12 +32,12 @@ class GenomeFeature:
     '''
     Contains information about a specific feature pulled from a Genbank file.
     '''
-    def __init__(self, nucrec, nuc_acc, nuc_desc, feature, strand, species):
+    def __init__(self, nucrec, feature, strand, species):
         # Basic feature metadata
         self.species = species
         self.nucrec = nucrec
-        self.accession = nuc_acc
-        self.description = nuc_desc
+        self.accession = nucrec.id
+        self.description = nucrec.description
         self.feature = feature
         self.type = feature.type
         self.strand = strand
@@ -256,6 +251,20 @@ class Frameshift:
         self.frameshift_seq = frameshift_seq
         self.frameshift_translation = str(Seq(frameshift_seq).translate())
 
+def create_arg_parser():
+    # Create argument parser
+    parser = argparse.ArgumentParser(description='Find some frameshifts')
+    # Require input json file
+    parser.add_argument('input', nargs='+', help='an input json file with frameshift search parameters')
+    # Optional --verbose flag for printing debug statements
+    parser.add_argument('--verbose', action='store_true', help='print helpful things')
+    # Optional --blast_only flag to skip frameshift detection and only find frameshift conservation
+    parser.add_argument('--find_conservation', action='store_true', help='skip frameshift detection and only find frameshift conservation')
+    parser.set_defaults(verbose=False, find_conservation=False)
+
+    args = parser.parse_args()
+    return args
+
 def download_gbk_files(data_path, assembly_accessions):
     '''
     Downloads genbank files to genome_path output dir using accession numbers from input json file
@@ -283,6 +292,25 @@ def download_gbk_files(data_path, assembly_accessions):
 
     with zipfile.ZipFile('genome_data.zip', 'r') as zip_ref:
         zip_ref.extractall(data_path)
+
+def detect_frameshifts(nucrec, strand):
+    for i in range(len(nucrec.features)):
+        feat = nucrec.features[i]
+        try:
+            feat.qualifiers['protein_id'][0]
+            if (feat.type == 'CDS'):
+                if (feat.strand == 1):           
+                    feature = GenomeFeature(nucrec=nucrec, feature=feat, strand=strand, species=species_params['species_name'])
+                    us_frameshifts = find_upstream_frameshift(feature, params['frame'], params['ustream_limit'], params['stop_codons'], species_params['signals'], args)
+                    if len(us_frameshifts) > 0:
+                        for fs in us_frameshifts:
+                            detected_frameshifts[feature.species].append(fs)
+                    ds_frameshifts = find_downstream_frameshift(feature, params['frame'], params['ustream_limit'], params['stop_codons'], species_params['signals'], args)
+                    if len(ds_frameshifts) > 0:
+                        for fs in ds_frameshifts:
+                            detected_frameshifts[feature.species].append(fs)
+        except:
+            continue
 
 def find_heptamer(feature, sequence, signals, start_pos, stop_pos, case, args):
     '''
@@ -355,7 +383,10 @@ def find_upstream_frameshift(feature, shift, ustream_limit, stop_codons, signals
     Search for +1 upstream frameshift in given feature - this is the case where we frameshift
     into the annotated gene
     Parameters:
-        feature - search for frameshift for this feature
+        feature (GenomeFeature): search for frameshift for this feature
+        shift (int): frameshift int (i.e. +1, +2, etc.)
+        ustream_limit (int): limit to search upstream from start codon
+        stop_codons [string]: array of stop codon strings
     '''
     if args.verbose: print('\n********** Searching for uptream frameshift in ', feature.protein_id, feature.locus_tag, '**********')
     
@@ -364,10 +395,12 @@ def find_upstream_frameshift(feature, shift, ustream_limit, stop_codons, signals
     extended_seq = str(feature.upstream_region_seq) + str(feature.spliced_seq)
     destination_start_codon_pos = len(extended_seq) - len(feature.spliced_seq)
     destination_stop_codon_pos = len(extended_seq) - 4
-    #print(extended_seq[destination_start_codon_pos:destination_stop_codon_pos+3])
-    #print(feature.nucrec[feature.get_true_pos_upstream(destination_start_codon_pos):feature.get_true_pos_upstream(destination_stop_codon_pos+2)+1].seq)
-    #print(feature.nucrec[feature.get_true_pos_upstream(destination_start_codon_pos):feature.get_true_pos_upstream(destination_start_codon_pos)+3].seq)
-    #print(feature.nucrec[feature.get_true_pos_upstream(destination_stop_codon_pos):feature.get_true_pos_upstream(destination_stop_codon_pos)+3].seq)
+    '''
+    print(extended_seq[destination_start_codon_pos:destination_stop_codon_pos+3])
+    print(feature.nucrec[feature.get_true_pos_upstream(destination_start_codon_pos):feature.get_true_pos_upstream(destination_stop_codon_pos+2)+1].seq)
+    print(feature.nucrec[feature.get_true_pos_upstream(destination_start_codon_pos):feature.get_true_pos_upstream(destination_start_codon_pos)+3].seq)
+    print(feature.nucrec[feature.get_true_pos_upstream(destination_stop_codon_pos):feature.get_true_pos_upstream(destination_stop_codon_pos)+3].seq)
+    '''
     roi_right = destination_stop_codon_pos
     if args.verbose:
         # Print destination frame with spacing 
@@ -570,6 +603,9 @@ def find_downstream_frameshift(feature, shift, ustream_limit, stop_codons, signa
 def write_to_txt(output_filename, species):
     '''
     Create and write frameshift information to txt file
+    Parameters:
+        output_filename (string): name for output file
+        species (string): species name
     '''
     with open(output_filename+'.txt','w') as outfile:
         for fs in detected_frameshifts[species]:
@@ -604,6 +640,9 @@ def write_to_txt(output_filename, species):
 def write_to_csv(output_filename, species):
     '''
     Create and write frameshift information to csv file
+    Parameters:
+        output_filename (string): name for output file
+        species (string): species name
     '''
     print('writing')
     with open(output_filename + '.csv', 'a', newline='') as csvfile:
@@ -651,9 +690,24 @@ def write_to_csv(output_filename, species):
                 csvwriter.writerow(output)
 
 def species_to_taxid(species):
-    return ncbi.get_name_translator([species])[species][0]
+    '''
+    Convert species name to unique taxonomic identifier assigned by the NCBI for organism)
+    Parameters:
+        species (string): species name to be converted
+    Return:
+        taxid (int): taxid for given species consisting of one to seven digits
+    '''
+    taxid =  ncbi.get_name_translator([species])[species][0]
+    return taxid
 
-def read_input_file(input_csv):
+def read_species_heptamer_input_file(input_csv):
+    '''
+    Read input csv containing list of species and corresponding heptamers
+    Parameters:
+        input_csv (string): csv file name
+    Return:
+        species_heptamers_dict {'species':'[string]}: dictionary, key = species, value = array of heptamer strings
+    '''
     species_heptamers_dict = {}
     with open(input_csv, newline='') as csvfile:
         file_reader = csv.reader(csvfile, delimiter='\n', quotechar='|')
@@ -673,13 +727,26 @@ def read_input_file(input_csv):
 
     return species_heptamers_dict
 
-def generate_jsons(input_csv, path):
+def generate_jsons(species_heptamers_dict, path):
+    '''
+    Create per species input json file with the following structure:
+    {
+        "species_name": "",
+        "outfile_name": "",
+        "signals": []
+        "assembly_accession": "",
+        "assembly_level": "",
+        "assembly_chromids": []
+    }
+    Parameters:
+        species_heptamers_dict {'species':'[string]}: dictionary, key = species, value = array of heptamer strings
+        path (string): location to store generated input file    
+    '''
     folder_check = os.path.isdir(path)
     if folder_check == True:
         shutil.rmtree(path)
     os.makedirs(path)
 
-    species_heptamers_dict = read_input_file(input_csv)
     for species in species_heptamers_dict.keys():
         species_dict = {}
         species_dict["species_name"] = species
@@ -725,6 +792,14 @@ def generate_jsons(input_csv, path):
                 else:
                     None
 def get_fs_csv_row(protein_id, fs_location):
+    '''
+    Return row in master frameshift csv file containing all frameshift details for specific protein + frameshift location
+    Parameters:
+        protein_id (string): protein id for desired row
+        fs_location (string): frameshift location for specific protein id
+    Return:
+        row (dict): dictionary containing all frameshift data for specified protein and frameshfit location
+    '''
     with open(params["results_dir"] + '/fs_conservation_sorted.csv', newline='') as fs_csv_file:
         frameshift_list = csv.DictReader(fs_csv_file)
         for row in frameshift_list:
@@ -733,6 +808,12 @@ def get_fs_csv_row(protein_id, fs_location):
                 return row
 
 def create_fasta_file_for_blast_db(fasta_file_name, rows):
+    '''
+    Create blast db input file from rows, if None, make blast db for all rows of csv file
+    Parameters:
+        fasta_file_name (string): name for output fasta file
+        rows [{}]: array of dictionaries containing all frameshift data for specified protein and frameshfit location
+    '''
     if (os.path.exists(fasta_file_name)):
         os.remove(fasta_file_name)
 
@@ -755,6 +836,15 @@ def create_fasta_file_for_blast_db(fasta_file_name, rows):
     fasta_file.close()
 
 def create_blast_query_file(csv_row, species, ortho_group):
+    '''
+    Create query file for blast search
+    Parameters:
+        csv_row (dict): dictionary containing all frameshift data for specified protein and frameshfit location
+        species (string): species name
+        ortho_group (int): orthology group if applicable (for FS and NFS segment blast search)
+    Return:
+        fasta_file_name (string): name of created query fasta file
+    '''
     if ortho_group == None:
         fasta_file_name = 'query_files/' + csv_row['Protein ID'] + '.fasta'
     else:
@@ -769,156 +859,20 @@ def create_blast_query_file(csv_row, species, ortho_group):
     return fasta_file_name
 
 def makeblastdb(fasta_file_name, db_name):
+    '''
+    Run makeblastdb commandline 
+    Parameters:
+        fasta_file_name (string): fasta file containing sequences for blast database
+        db_name (string): database name
+    '''
     blast_db = './' + db_name
     cmd = 'makeblastdb -in {input} -out {out} -dbtype prot'
     os.system(cmd.format(input=fasta_file_name, out=blast_db))
 
-def append_ortho_group(protein_id, fs_location, group_num):
-    global frameshift_list
-    for row in frameshift_list:
-        if row['Protein ID'] == protein_id and row['Frameshift Location'] == fs_location:
-            row['Orthology Group'] = group_num
-
-def reciprocal_blast_search(original_protein_id, original_fs_location, hit_protein_id, hit_fs_location):
-    cmd = 'blastp -query {query} -db {db} -evalue {e} -out {out} -outfmt 5'
-    blast_db = './db/blast_db'
-    
-    for row in frameshift_list:
-        if row['Protein ID'] == hit_protein_id and row['Frameshift Location'] == hit_fs_location:
-            output_file = 'blast_output/' + hit_protein_id + '.xml'
-            query_fasta = create_blast_query_file(row, hit_protein_id, None)
-            os.system(cmd.format(query=query_fasta, db=blast_db, e=params['blast_e_val_threshold'] ,out=output_file))
-            with open(output_file) as blast_output:
-                blast_records = list(NCBIXML.parse(blast_output))
-                for blast_record in blast_records:  
-                    print(blast_record.query)
-                    input_seq_len = blast_record.query.split(" | ")[4]
-                    for alignment in blast_record.alignments:
-                        align_protein_id = alignment.title.split(' | ')[2]
-                        align_fs_location = alignment.title.split(' | ')[5]
-                        if align_protein_id == original_protein_id and align_fs_location == original_fs_location:
-                            coverage = float(alignment.hsps[0].query_end - alignment.hsps[0].query_start + 1) / float(input_seq_len)
-                            print('reciprocal blast coverage: ', coverage)
-                            for hsp in alignment.hsps:
-                                if hsp.expect < params['blast_e_val_threshold'] and coverage > params['blast_coverage_threshold']:
-                                    print(hit_protein_id, '->', original_protein_id)
-                                    return True
-            break
-
-def fs_blast_search(db, ortho_group):
-    cmd = 'blastp -query "{query}" -db {db} -evalue {e} -out "{out}" -outfmt 5'
-    blast_db = db
-    ortho_group_percent_identities = {}
-    query_file_path = 'query_files/' + str(ortho_group) + '/'
-    for fasta_file in os.listdir(query_file_path):
-        output_file_path = 'blast_output/' + str(ortho_group) + '/'
-        folder_check = os.path.isdir(output_file_path)
-        if folder_check == False:
-            os.makedirs(output_file_path)
-        output_file = output_file_path + fasta_file.split('.fasta')[0] + '.xml'
-        os.system(cmd.format(query=query_file_path + fasta_file, db=db, e=params['blast_e_val_threshold'] ,out=output_file))
-        ortho_group_percent_identities[fasta_file.split('.fasta')[0]] = parse_fs_blast_output(output_file, ortho_group)
-    print(ortho_group_percent_identities)
-    return ortho_group_percent_identities
-    
-
-def parse_fs_blast_output(output_file, ortho_group):
-    nfs_percent_ids = {}
-    fs_percent_ids = {}
-    avg_nfs_percent_id = 0
-    avg_fs_percent_id = 0
-    sequence_count = 0
-    with open(output_file) as blast_output:
-        blast_records = list(NCBIXML.parse(blast_output))
-        for blast_record in blast_records:
-            print('\n*************************************************\n',blast_record.query)
-            input_seq_len = blast_record.query.split(" | ")[4]
-            input_seq_protein_id = blast_record.query.split(" | ")[2]
-            input_seq_fs_location = blast_record.query.split(" | ")[5]
-            #print("Input sequence length: ", input_seq_len)
-            print("Alignments:")
-            for alignment in blast_record.alignments:
-                if alignment.title.split(' | ')[2] != input_seq_protein_id and alignment.title.split(' | ')[5] != input_seq_fs_location:
-                    for hsp in alignment.hsps:
-                        if hsp.expect < params['blast_e_val_threshold']:
-                            hit_protein_id = alignment.title.split(' | ')[2]
-                            hit_fs_location = alignment.title.split(' | ')[5]
-                            #hit_csv_row = get_fs_csv_row(hit_protein_id, hit_fs_location)
-                            input_csv_row = get_fs_csv_row(input_seq_protein_id, input_seq_fs_location)
-                            coordinates = get_fs_coordinates(input_csv_row, hsp.query_start-1)
-                            hit_segments = get_fs_segments(input_csv_row, hsp.sbjct, coordinates)
-                            input_segments = get_fs_segments(input_csv_row, hsp.query, coordinates)
-                            fs_percent_id = calculate_segment_percent_id(input_segments.fs_segment, hit_segments.fs_segment)
-                            nfs_percent_id = calculate_segment_percent_id(input_segments.nfs_segment, hit_segments.nfs_segment)
-                            avg_fs_percent_id += fs_percent_id
-                            avg_nfs_percent_id += nfs_percent_id
-                            nfs_percent_ids[hit_protein_id + '_' + hit_fs_location] = nfs_percent_id
-                            fs_percent_ids[hit_protein_id + '_' +hit_fs_location] = fs_percent_id
-                            sequence_count += 1
-                            print('hit: ',hit_protein_id, hit_fs_location)
-                            print('input_seq_len: ', input_seq_len)
-                            print('alignment_len: ', hsp.align_length)
-                            print('sbjct offset:', hsp.sbjct_start)
-                            print('query offset:', hsp.query_start)
-                            print('coordinates: ', coordinates)
-                            print('hit_segments.fs_segment\n',hit_segments.fs_segment)
-                            print('hit_segments.nfs_segment\n',hit_segments.nfs_segment)
-                            print('input seq rel pos\n', input_csv_row['Frameshift Location (Rel)'])
-                            print('input_segments.fs_segment\n',input_segments.fs_segment)
-                            print('input_segments.nfs_segment\n', input_segments.nfs_segment)
-                            print('hsp.query\n',hsp.query)
-                            print('hsp.sbjct\n',hsp.sbjct)
-                            print('FS %ID',fs_percent_id)
-                            print('NFS %ID',nfs_percent_id)
-                            break
-                            
-    if sequence_count > 0:
-        avg_fs_percent_id = avg_fs_percent_id/sequence_count
-        avg_nfs_percent_id = avg_nfs_percent_id/sequence_count
-    else:
-        avg_fs_percent_id = 0
-        avg_nfs_percent_id = 0
-    #print(fs_percent_ids, '\n', nfs_percent_ids, '\n', avg_fs_percent_id,'\n', avg_nfs_percent_id)
-    return {'fs_percent_ids':fs_percent_ids, 'nfs_percent_ids':nfs_percent_ids, 'avg_fs_percent_id':avg_fs_percent_id, 'avg_nfs_percent_id':avg_nfs_percent_id}
-
-def get_fs_coordinates(fs_row, offset):
-    rel_coordinates = fs_row['Frameshift Location (Rel)'].strip('join{').strip('}').split(',')
-    begin_pos = 0
-    fs_pos = int(int(rel_coordinates[0].strip('[').strip(']').split(':')[1])/3) - offset
-    end_pos = int(int(rel_coordinates[1].strip('[').strip(']').split(':')[1])/3) - 1 - offset
-    return (begin_pos, fs_pos, end_pos)
-
-def get_fs_segments(fs_row, alignment_seq, coordinates):
-    if fs_row['Case'] == 'Downstream':
-        NFS_segment = alignment_seq[coordinates[0]:coordinates[1]]
-        FS_segment = alignment_seq[coordinates[1]:coordinates[2]]
-        print('alignment_seq\n',alignment_seq)
-        print('FS_segment: ', FS_segment)
-        print('NFS_segment: ', NFS_segment)
-    else:
-        FS_segment = alignment_seq[coordinates[0]:coordinates[1]]
-        NFS_segment = alignment_seq[coordinates[1]:coordinates[2]]
-
-    FS_segments = namedtuple('FS_segments', 'fs_segment nfs_segment')
-    
-    return FS_segments(FS_segment, NFS_segment) 
-
-def calculate_segment_percent_id(segment_one, segment_two):
-    identity = 0
-    gaps = 0
-    align_len = len(segment_one)
-    for i in range(0,align_len):
-        if segment_one[i] == segment_two[i]:
-            identity += 1
-        elif segment_one[i] == '-' or segment_two[i] == '-':
-            gaps += 1
-    if (align_len - gaps) > 0:
-        return identity/(align_len - gaps) * 100
-    else:
-        return 0
-    
-    
 def blast_search():
+    '''
+    Main function for blast search and appending ortho groups to frameshifts
+    '''
     print('Beginning blast search')
     cmd = "blastp -query {query} -db {db} -evalue {e} -out {out} -outfmt 5"
     blast_db = './db/blast_db'
@@ -953,15 +907,22 @@ def blast_search():
                 # Write results
                 print('Updating fs conservation csv')
                 with open(params["results_dir"] + '/fs_conservation.csv', 'w', newline='') as conservation_csv_file:
-                    fields = ['Species','Accession', 'Description', 'Locus Tag', 'Protein ID', 'Known', 'Product', 'Strand', 'Case', 'Signal', 'Signal Score', 'Frameshift Stop Codon', 
-        'Annotated Gene Location', 'Frameshift Location', 'Frameshift Location (Rel)', 'Annotated Gene Product Length', 'Frameshift Product Length', 'Product Length Diff', 'Annotated Gene Product', 
-        'Frameshift Product', 'Spliced Annotated Gene Sequence', 'Spliced Frameshift Sequence', 'Orthology Group']
+                    fields = ['Species','Accession', 'Description', 'Locus Tag', 'Protein ID', 'Known', 'Product', 'Strand', 'Case', 'Signal', 
+                    'Signal Score', 'Frameshift Stop Codon', 'Annotated Gene Location', 'Frameshift Location', 'Frameshift Location (Rel)', 
+                    'Annotated Gene Product Length', 'Frameshift Product Length', 'Product Length Diff', 'Annotated Gene Product', 
+                    'Frameshift Product', 'Spliced Annotated Gene Sequence', 'Spliced Frameshift Sequence', 'Orthology Group']
                     writer = csv.DictWriter(conservation_csv_file, fieldnames=fields)
                     writer.writeheader()
                     for row in frameshift_list:
                         writer.writerow(row)
                         
 def parse_blast_output(output_file, ortho_group):
+    '''
+    Parse blast XML file
+    Parameters:
+        output_file (string): name of blast XML file to parse
+        ortho_group (int): ortho group for results
+    '''
     with open(output_file) as blast_output:
         blast_records = list(NCBIXML.parse(blast_output))
         for blast_record in blast_records:
@@ -984,7 +945,229 @@ def parse_blast_output(output_file, ortho_group):
                             append_ortho_group(hit_protein_id, hit_fs_location, ortho_group)
             print('*************************************************\n')
 
+def reciprocal_blast_search(original_protein_id, original_fs_location, hit_protein_id, hit_fs_location):
+    '''
+    Run blast command line for reciprocal blast search
+    Parameters:
+        original_protein_id (string): protein id of frameshift that must be a hit from the reciprocal blast
+        original_fs_location (string): frameshift location of frameshift that must be a hit from the reciprocal blast
+        hit_protein_id (string): protein id of frameshift for reciprocal blast query 
+        hit_fs_location (string): frameshift location of frameshift for reciprocal blast query 
+    Return:
+        bool: return True or False if found hit (original query frameshift) for the reciprocal blast
+    '''
+    cmd = 'blastp -query {query} -db {db} -evalue {e} -out {out} -outfmt 5'
+    blast_db = './db/blast_db'
+    
+    for row in frameshift_list:
+        if row['Protein ID'] == hit_protein_id and row['Frameshift Location'] == hit_fs_location:
+            output_file = 'blast_output/' + hit_protein_id + '.xml'
+            query_fasta = create_blast_query_file(row, hit_protein_id, None)
+            os.system(cmd.format(query=query_fasta, db=blast_db, e=params['blast_e_val_threshold'] ,out=output_file))
+            with open(output_file) as blast_output:
+                blast_records = list(NCBIXML.parse(blast_output))
+                for blast_record in blast_records:  
+                    print(blast_record.query)
+                    input_seq_len = blast_record.query.split(" | ")[4]
+                    for alignment in blast_record.alignments:
+                        align_protein_id = alignment.title.split(' | ')[2]
+                        align_fs_location = alignment.title.split(' | ')[5]
+                        if align_protein_id == original_protein_id and align_fs_location == original_fs_location:
+                            coverage = float(alignment.hsps[0].query_end - alignment.hsps[0].query_start + 1) / float(input_seq_len)
+                            print('reciprocal blast coverage: ', coverage)
+                            for hsp in alignment.hsps:
+                                if hsp.expect < params['blast_e_val_threshold'] and coverage > params['blast_coverage_threshold']:
+                                    print(hit_protein_id, '->', original_protein_id)
+                                    return True
+            break
+
+def append_ortho_group(protein_id, fs_location, group_num):
+    '''
+    Update orthology group in global frameshift list
+    Parameters:
+        protein_id (string): protein id of frameshift to append ortho group to
+        fs_location (string): fs lcoation of frameshift to append ortho group to
+        group_num (int): ortho group
+    '''
+    global frameshift_list
+    for row in frameshift_list:
+        if row['Protein ID'] == protein_id and row['Frameshift Location'] == fs_location:
+            row['Orthology Group'] = group_num
+
+def fs_blast_search(db, ortho_group):
+    '''
+    Run blast command line for all frameshifts in given ortho group
+    Parameters:
+        db: blast database
+        orthogroup (int): orthology group of interest
+    Return:
+        ortho_group_percent_identities {'protein_id_fs_location': {}}:
+    '''
+    cmd = 'blastp -query "{query}" -db {db} -evalue {e} -out "{out}" -outfmt 5'
+    blast_db = db
+    ortho_group_percent_identities = {}
+    query_file_path = 'query_files/' + str(ortho_group) + '/'
+    for fasta_file in os.listdir(query_file_path):
+        output_file_path = 'blast_output/' + str(ortho_group) + '/'
+        folder_check = os.path.isdir(output_file_path)
+        if folder_check == False:
+            os.makedirs(output_file_path)
+        output_file = output_file_path + fasta_file.split('.fasta')[0] + '.xml'
+        os.system(cmd.format(query=query_file_path + fasta_file, db=db, e=params['blast_e_val_threshold'] ,out=output_file))
+        ortho_group_percent_identities[fasta_file.split('.fasta')[0]] = parse_fs_blast_output(output_file, ortho_group)
+    print(ortho_group_percent_identities)
+    return ortho_group_percent_identities
+    
+
+def parse_fs_blast_output(output_file, ortho_group):
+    '''
+    Parse results for FS and NFS segments of each frameshift in each ortho group, calculate %ID for FS and NFS segments
+    Parameters:
+        output_file (string): name of blast XML file to parse
+        ortho_group (int): ortho group for results
+    Return:
+        fs_nfs_percent_ids_dict (dict): dictionary with the following structure:
+            {
+            'fs_percent_ids': ['accession': float],
+            'nfs_percent_ids': ['accession': float],
+            'avg_fs_percent_id': float, 
+            'avg_nfs_percent_id': float
+             }
+
+    '''
+    nfs_percent_ids = {}
+    fs_percent_ids = {}
+    avg_nfs_percent_id = 0
+    avg_fs_percent_id = 0
+    sequence_count = 0
+    with open(output_file) as blast_output:
+        blast_records = list(NCBIXML.parse(blast_output))
+        for blast_record in blast_records:
+            print('\n*************************************************\n',blast_record.query)
+            input_seq_len = blast_record.query.split(" | ")[4]
+            input_seq_protein_id = blast_record.query.split(" | ")[2]
+            input_seq_fs_location = blast_record.query.split(" | ")[5]
+            #print("Input sequence length: ", input_seq_len)
+            print("Alignments:")
+            for alignment in blast_record.alignments:
+                if alignment.title.split(' | ')[2] != input_seq_protein_id and alignment.title.split(' | ')[5] != input_seq_fs_location:
+                    for hsp in alignment.hsps:
+                        if hsp.expect < params['blast_e_val_threshold']:
+                            hit_protein_id = alignment.title.split(' | ')[2]
+                            hit_fs_location = alignment.title.split(' | ')[5]
+                            #hit_csv_row = get_fs_csv_row(hit_protein_id, hit_fs_location)
+                            input_csv_row = get_fs_csv_row(input_seq_protein_id, input_seq_fs_location)
+                            coordinates = get_fs_coordinates(input_csv_row, hsp.query_start-1)
+                            hit_segments = get_fs_segments(input_csv_row, hsp.sbjct, coordinates)
+                            input_segments = get_fs_segments(input_csv_row, hsp.query, coordinates)
+                            fs_percent_id = calculate_segment_percent_id(input_segments.fs_segment, hit_segments.fs_segment)
+                            nfs_percent_id = calculate_segment_percent_id(input_segments.nfs_segment, hit_segments.nfs_segment)
+                            avg_fs_percent_id += fs_percent_id
+                            avg_nfs_percent_id += nfs_percent_id
+                            nfs_percent_ids[hit_protein_id + '_' + hit_fs_location] = nfs_percent_id
+                            fs_percent_ids[hit_protein_id + '_' +hit_fs_location] = fs_percent_id
+                            sequence_count += 1
+                            '''
+                            print('hit: ',hit_protein_id, hit_fs_location)
+                            print('input_seq_len: ', input_seq_len)
+                            print('alignment_len: ', hsp.align_length)
+                            print('sbjct offset:', hsp.sbjct_start)
+                            print('query offset:', hsp.query_start)
+                            print('coordinates: ', coordinates)
+                            print('hit_segments.fs_segment\n',hit_segments.fs_segment)
+                            print('hit_segments.nfs_segment\n',hit_segments.nfs_segment)
+                            print('input seq rel pos\n', input_csv_row['Frameshift Location (Rel)'])
+                            print('input_segments.fs_segment\n',input_segments.fs_segment)
+                            print('input_segments.nfs_segment\n', input_segments.nfs_segment)
+                            print('hsp.query\n',hsp.query)
+                            print('hsp.sbjct\n',hsp.sbjct)
+                            print('FS %ID',fs_percent_id)
+                            print('NFS %ID',nfs_percent_id)
+                            '''
+                            break
+                            
+    if sequence_count > 0:
+        avg_fs_percent_id = avg_fs_percent_id/sequence_count
+        avg_nfs_percent_id = avg_nfs_percent_id/sequence_count
+    else:
+        avg_fs_percent_id = 0
+        avg_nfs_percent_id = 0
+    #print(fs_percent_ids, '\n', nfs_percent_ids, '\n', avg_fs_percent_id,'\n', avg_nfs_percent_id)
+    fs_nfs_percent_ids_dict = {
+        'fs_percent_ids':fs_percent_ids, 
+        'nfs_percent_ids':nfs_percent_ids, 
+        'avg_fs_percent_id':avg_fs_percent_id, 
+        'avg_nfs_percent_id':avg_nfs_percent_id}
+
+    return fs_nfs_percent_ids_dict
+
+def get_fs_coordinates(fs_row, offset):
+    '''
+    Get framshift coordinates for blast alignment sequence
+    Parameters:
+        fs_row {}: dictionary containing all frameshift data for a specific frameshift
+        offset (int): alignment offste
+    Return:
+        coordinates (): tuple of coordinates (begin_pos, fs_pos, end_pos)
+    '''
+    rel_coordinates = fs_row['Frameshift Location (Rel)'].strip('join{').strip('}').split(',')
+    begin_pos = 0
+    fs_pos = int(int(rel_coordinates[0].strip('[').strip(']').split(':')[1])/3) - offset
+    end_pos = int(int(rel_coordinates[1].strip('[').strip(']').split(':')[1])/3) - 1 - offset
+    coordinates = (begin_pos, fs_pos, end_pos)
+    return coordinates
+
+def get_fs_segments(fs_row, alignment_seq, coordinates):
+    '''
+    Return NFS and FS regions of a frameshift
+    Parameters:
+        fs_row {}: dictionary containing all frameshift data for a specific frameshift
+        alignment_seq (string): blast alignment sequence
+        coordinates (): tuple of coordinates (begin_pos, fs_pos, end_pos)
+    Return:
+        FS_segments(FS_segment, NFS_segment): tuple with FS segment sequence string and NFS segment sequence string
+    '''
+    if fs_row['Case'] == 'Downstream':
+        NFS_segment = alignment_seq[coordinates[0]:coordinates[1]]
+        FS_segment = alignment_seq[coordinates[1]:coordinates[2]]
+        print('alignment_seq\n',alignment_seq)
+        print('FS_segment: ', FS_segment)
+        print('NFS_segment: ', NFS_segment)
+    else:
+        FS_segment = alignment_seq[coordinates[0]:coordinates[1]]
+        NFS_segment = alignment_seq[coordinates[1]:coordinates[2]]
+
+    FS_segments = namedtuple('FS_segments', 'fs_segment nfs_segment')
+    
+    return FS_segments(FS_segment, NFS_segment) 
+
+def calculate_segment_percent_id(segment_one, segment_two):
+    '''
+    Calculate percent ID between two sequences
+    Parameters:
+        segment_one (strint): sequence one
+        segment_two (strint): sequence two
+    Return:
+        percent_id (float): percent id of both inputted sequences identity/(align_len - gaps) * 100
+    '''
+    identity = 0
+    gaps = 0
+    align_len = len(segment_one)
+    for i in range(0,align_len):
+        if segment_one[i] == segment_two[i]:
+            identity += 1
+        elif segment_one[i] == '-' or segment_two[i] == '-':
+            gaps += 1
+    
+    percent_id = 0
+    if (align_len - gaps) > 0:
+        percent_id = identity/(align_len - gaps) * 100
+    return percent_id
+
 def add_percent_ids():
+    '''
+    Add ortho group percent ID's and FS/NFS percent IDs
+    '''
     print("Adding %IDs")
     import pandas as pd
     csvData = pd.read_csv(params["results_dir"] + '/fs_conservation.csv')                                 
@@ -1065,6 +1248,13 @@ def add_percent_ids():
                 writer.writerow(row)
         
 def calculate_avg_percent_id(protein_ids):
+    '''
+    Parse initial blast results to calculate percent id for orthologs
+    Parameters:
+        protein_ids [{}]: array of dictionaries containing all frameshift data for specified protein and frameshfit location
+    Return:
+        avg_percent_id (float): average percent id for proteins in given ortho group
+    '''
     sum_percent_ids = 0
     num_proteins = 0
     print("len(protein_ids)", len(protein_ids))
@@ -1097,8 +1287,7 @@ def calculate_avg_percent_id(protein_ids):
                                         break
                                 protein_ids.remove(protein_tmp) 
                                 #print('removed', protein_tmp['Protein ID'], protein_tmp['Frameshift Location'],hsp.identities/(hsp.align_length-hsp.gaps) * 100)                    
-                                num_proteins += 1
-                                        
+                                num_proteins += 1                         
     if num_proteins > 0:
         print(num_proteins)
         avg_percent_id = sum_percent_ids/num_proteins
@@ -1108,154 +1297,66 @@ def calculate_avg_percent_id(protein_ids):
     return avg_percent_id
 
 if __name__ == "__main__":
-    # Create argument parser
-    parser = argparse.ArgumentParser(description='Find some frameshifts')
-    # Require input json file
-    parser.add_argument('input', nargs='+', help='an input json file with frameshift search parameters')
-    # Optional --verbose flag for printing debug statements
-    parser.add_argument('--verbose', action='store_true', help='print helpful things')
-    # Optional --blast_only flag to skip frameshift detection and only find frameshift conservation
-    parser.add_argument('--find_conservation', action='store_true', help='skip frameshift detection and only find frameshift conservation')
-    # Optional --protein_id flag to detect frameshift for only a specified protein
-    parser.add_argument('--protein_id', help='detect frameshift for only a specified protein')
+    global args
+    args = create_arg_parser()
 
-    parser.set_defaults(verbose=False, find_conservation=False)
-
-    args = parser.parse_args()
-
-    print('Opening input File: ', args.input[0])
-    print(args.protein_id)
-    global params
+    # Open main input file with frameshift search parameters
     with open(args.input[0]) as json_file:  
+        global params
         params = json.load(json_file)
     
+    # If not skipping frameshift detection step
     if not args.find_conservation:
-        if args.protein_id == None:
-            folder_check = os.path.isdir(params["results_dir"] )
-            if folder_check == True:
-                shutil.rmtree(params["results_dir"])
-            os.makedirs(params["results_dir"])
+        # Delete results_dir if exists (fresh start per run)
+        folder_check = os.path.isdir(params["results_dir"] )
+        if folder_check == True:
+            shutil.rmtree(params["results_dir"])
+        os.makedirs(params["results_dir"])
+        
+        # Set frameshift csv header
+        fields = ['Species','Accession', 'Description', 'Locus Tag', 'Protein ID', 'Known', 'Product', 'Strand', 'Case', 'Signal', 'Signal Score', 
+        'Frameshift Stop Codon', 'Annotated Gene Location', 'Frameshift Location', 'Frameshift Location (Rel)', 'Annotated Gene Product Length', 
+        'Frameshift Product Length', 'Product Length Diff', 'Annotated Gene Product',  'Frameshift Product', 'Spliced Annotated Gene Sequence', 
+        'Spliced Frameshift Sequence', 'Orthology Group']
+        with open(params["results_dir"] + '/frameshifts.csv', 'a', newline='') as csvfile:
+            csvwriter = csv.writer(csvfile)
+            csvwriter.writerow(fields)
 
-            fields = ['Species','Accession', 'Description', 'Locus Tag', 'Protein ID', 'Known', 'Product', 'Strand', 'Case', 'Signal', 'Signal Score', 'Frameshift Stop Codon', 
-        'Annotated Gene Location', 'Frameshift Location', 'Frameshift Location (Rel)', 'Annotated Gene Product Length', 'Frameshift Product Length', 'Product Length Diff', 'Annotated Gene Product', 
-        'Frameshift Product', 'Spliced Annotated Gene Sequence', 'Spliced Frameshift Sequence', 'Orthology Group']
-            with open(params["results_dir"] + '/frameshifts.csv', 'a', newline='') as csvfile:
-                csvwriter = csv.writer(csvfile)
-                csvwriter.writerow(fields)
-            
-            generate_jsons(params['csv_input_file'], params['fs_inputs_path'])
-            assembly_accessions = []
-            for input_file in os.listdir(params['fs_inputs_path']):
-                print(input_file)
-                with open(params['fs_inputs_path'] + '/' +input_file) as json_file:  
-                    species_params = json.load(json_file)
-                    assembly_accessions.append(species_params['assembly_accession'])
-            download_gbk_files(params['genome_path'] + '/', assembly_accessions)
-            
-        data_path = params['genome_path'] + '/ncbi_dataset/data/'
+        # Generate input json files for each species, containing heptamers to search for and genome assembly accessions and chromids
+        species_heptamers_dict = read_species_heptamer_input_file(params['csv_input_file'])
+        generate_jsons(species_heptamers_dict, params['fs_inputs_path'])
+
+        # Download all genbank files for all species in a batch
+        assembly_accessions = []
         for input_file in os.listdir(params['fs_inputs_path']):
+            print(input_file)
+            with open(params['fs_inputs_path'] + '/' +input_file) as json_file:  
+                species_params = json.load(json_file)
+                assembly_accessions.append(species_params['assembly_accession'])
+        download_gbk_files(params['genome_path'] + '/', assembly_accessions)
+            
+        # Go through each species input file and search for frameshifts in the +1 and -1 strands
+        for input_file in os.listdir(params['fs_inputs_path']):
+            data_path = params['genome_path'] + '/ncbi_dataset/data/'
             print(input_file)
             with open(params['fs_inputs_path'] + '/' +input_file) as json_file:  
                 species_params = json.load(json_file)
                 detected_frameshifts[species_params['species_name']] = []
                 nucrecs = SeqIO.parse(data_path + species_params['assembly_accession'] + '/genomic.gbff', "genbank")
                 for nucrec in nucrecs:
-                    nucrec_id = nucrec.id
-                    print('Processing: ', nucrec_id)
-                    nucrec_desc = nucrec.description
-                    #print("Processing: " + nucrec.id)
-                    # For each feature in the genebank file, create a GenomeFeature object and store in global genome_features array
-                    for i in range(len(nucrec.features)):
-                        feat = nucrec.features[i]
-                        try:
-                            feat.qualifiers['protein_id'][0]
-                            if (feat.type == 'CDS'):
-                                if (feat.strand == 1):
-                                    if args.protein_id == None:
-
-                                        #genome_features.append(GenomeFeature(nucrec=nucrec, nuc_acc=nucrec_id, nuc_desc=nucrec_desc, feature=feat, strand='+1', species=species_params['species_name']))
-                                        feature = GenomeFeature(nucrec=nucrec, nuc_acc=nucrec_id, nuc_desc=nucrec_desc, feature=feat, strand='+1', species=species_params['species_name'])
-                                        us_frameshifts = find_upstream_frameshift(feature, params['frame'], params['ustream_limit'], params['stop_codons'], species_params['signals'], args)
-                                        if len(us_frameshifts) > 0:
-                                            for fs in us_frameshifts:
-                                                detected_frameshifts[feature.species].append(fs)
-                                        ds_frameshifts = find_downstream_frameshift(feature, params['frame'], params['ustream_limit'], params['stop_codons'], species_params['signals'], args)
-                                        if len(ds_frameshifts) > 0:
-                                            for fs in ds_frameshifts:
-                                                detected_frameshifts[feature.species].append(fs)
-                                    else:
-                                        try:
-                                            feat.qualifiers['protein_id'][0]
-                                            if (feat.qualifiers['protein_id'][0]) == args.protein_id:
-                                                print('found ',args.protein_id)
-                                                feature = GenomeFeature(nucrec=nucrec, nuc_acc=nucrec_id, nuc_desc=nucrec_desc, feature=feat, strand='+1', species=species_params['species_name'])
-                                                us_frameshifts = find_upstream_frameshift(feature, params['frame'], params['ustream_limit'], params['stop_codons'], species_params['signals'], args)
-                                                if len(us_frameshifts) > 0:
-                                                    for fs in us_frameshifts:
-                                                        detected_frameshifts[feature.species].append(fs)
-                                                ds_frameshifts = find_downstream_frameshift(feature, params['frame'], params['ustream_limit'], params['stop_codons'], species_params['signals'], args)
-                                                if len(ds_frameshifts) > 0:
-                                                    for fs in ds_frameshifts:
-                                                        detected_frameshifts[feature.species].append(fs)
-                                        except:
-                                            nucrec.features[i]
-                        except:
-                            continue
-                    # Same loop for the reverse strand
-                    nucrec = nucrec.reverse_complement()
-                    for i in range(len(nucrec.features)):
-                        feat = nucrec.features[i]
-                        try:
-                            feat.qualifiers['protein_id'][0]
-                            if (feat.type == 'CDS'):
-                                if (feat.strand == 1):
-                                    if args.protein_id == None:
-                                        feature = GenomeFeature(nucrec=nucrec, nuc_acc=nucrec_id, nuc_desc=nucrec_desc, feature=feat, strand='-1', species=species_params['species_name'])
-                                        us_frameshifts = find_upstream_frameshift(feature, params['frame'], params['ustream_limit'], params['stop_codons'], species_params['signals'], args)
-                                        if len(us_frameshifts) > 0:
-                                            for fs in us_frameshifts:
-                                                detected_frameshifts[feature.species].append(fs)
-                                        ds_frameshifts = find_downstream_frameshift(feature, params['frame'], params['ustream_limit'], params['stop_codons'], species_params['signals'], args)
-                                        if len(ds_frameshifts) > 0:
-                                            for fs in ds_frameshifts:
-                                                detected_frameshifts[feature.species].append(fs)
-                                    else:
-                                        try:
-                                            feat.qualifiers['protein_id'][0]
-                                            if (feat.qualifiers['protein_id'][0]) == args.protein_id:
-                                                print('found ',args.protein_id)
-                                                feature = GenomeFeature(nucrec=nucrec, nuc_acc=nucrec_id, nuc_desc=nucrec_desc, feature=feat, strand='-1', species=species_params['species_name'])
-                                                us_frameshifts = find_upstream_frameshift(feature, params['frame'], params['ustream_limit'], params['stop_codons'], species_params['signals'], args)
-                                                if len(us_frameshifts) > 0:
-                                                    for fs in us_frameshifts:
-                                                        detected_frameshifts[feature.species].append(fs)
-                                                ds_frameshifts = find_downstream_frameshift(feature, params['frame'], params['ustream_limit'], params['stop_codons'], species_params['signals'], args)
-                                                if len(ds_frameshifts) > 0:
-                                                    for fs in ds_frameshifts:
-                                                        detected_frameshifts[feature.species].append(fs)
-                                        except:
-                                            nucrec.features[i]
-                        except:
-                            continue
-        # For each GenomeFeature in genome_features, search for upstream and downstream frameshifts
-        for feature in genome_features:
-            us_frameshifts = find_upstream_frameshift(feature, params['frame'], params['ustream_limit'], params['stop_codons'], species_params['signals'], args)
-            if len(us_frameshifts) > 0:
-                for fs in us_frameshifts:
-                    detected_frameshifts[feature.species].append(fs)
-            ds_frameshifts = find_downstream_frameshift(feature, params['frame'], params['ustream_limit'], params['stop_codons'], species_params['signals'], args)
-            if len(ds_frameshifts) > 0:
-                for fs in ds_frameshifts:
-                    detected_frameshifts[feature.species].append(fs)
+                    print('Processing: ', nucrec.id)
+                    # Detect frameshifts in both the +1 and -1 strands
+                    detect_frameshifts(nucrec, '+1')
+                    detect_frameshifts(nucrec.reverse_complement(), '-1')
         
-        if args.protein_id == None:
-            for species_name in detected_frameshifts.keys():
-                print('Writing results to', species_name)
-                write_to_txt(params["results_dir"] + '/' + species_name , species_name )
-                write_to_csv(params["results_dir"] + '/frameshifts', species_name)
-    if args.protein_id == None:  
-        print()      
-        create_fasta_file_for_blast_db('frameshifts.fasta', None) 
-        makeblastdb('frameshifts.fasta', 'main_db/blast_db')
-        blast_search()
-        add_percent_ids()
+        # Write detected frameshifts to txt and csv file
+        for species_name in detected_frameshifts.keys():
+            print('Writing results to', species_name)
+            write_to_txt(params["results_dir"] + '/' + species_name , species_name )
+            write_to_csv(params["results_dir"] + '/frameshifts', species_name) 
+        
+    # Find framshift conservation
+    create_fasta_file_for_blast_db('frameshifts.fasta', None) 
+    makeblastdb('frameshifts.fasta', 'main_db/blast_db')
+    blast_search()
+    add_percent_ids()
